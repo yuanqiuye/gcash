@@ -20,6 +20,9 @@ default_currency: TWD
 
 # 預設帳本路徑
 default_book: ~/Documents/my_finance.gnucash
+
+# API Key（使用 serve 命令時建議設定）
+api_key: your-secret-key
 ```
 
 帳本路徑優先順序：`--book` 參數 > `GNUCASH_BOOK` 環境變數 > 配置文件
@@ -93,29 +96,37 @@ gcash -b my.gnucash tx add --file tx.json --format json
 #### 方案 A：升級為資料庫連線 (PostgreSQL) — 【最強烈推薦】
 GnuCash 官方原生支援關聯式資料庫。將帳本放在 Server 端資料庫，兩邊利用網路連線讀寫，從根本解決鎖死與檔案同步問題。
 
-1. **部署 Postgres**：使用專案提供的 `docker-compose.yml` 在 Server 啟動資料庫 `docker compose up -d`。
-2. **轉移帳本**：打開本地電腦 GnuCash GUI -> 另存新檔 -> 選擇「資料庫連線」 -> 輸入 Server IP、帳號 (`gnucash`)、密碼。
-3. **Agent 呼叫**：在 Server 上設定 `GNUCASH_BOOK` (或放在 config.yaml) 後，透過新的 `docker-gcash.sh` 來呼叫 CLI。
+1. **部署 Postgres**：建立 `.env` 檔設定密碼，然後執行 `docker compose up -d`：
+   ```env
+   # .env
+   POSTGRES_PASSWORD=your-secure-password
+   POSTGRES_USER=gnucash
+   POSTGRES_DB=gnucash_data
+   GNUCASH_API_KEY=your-api-key
+   ```
+2. **轉移帳本**：打開本地電腦 GnuCash GUI -> 另存新檔 -> 選擇「資料庫連線」 -> 輸入 Server IP、帳號 (`.env` 中的 `POSTGRES_USER`)、密碼 (`.env` 中的 `POSTGRES_PASSWORD`)。
+3. **Agent 呼叫**：`docker compose up -d` 會同時啟動 CLI API Server，帳本路徑自動從 `.env` 讀取。
 
 > [!TIP]
-> **🛡️ Agent 防呆退回機制 (Database Rollback) & Web 控制面板**
+> **🛡️ Agent 防呆退回機制 (Auto Backup & Rollback)**
 >
-> 當您的 `GNUCASH_BOOK` 為 `postgresql://...` 且發生任何寫入動作（`tx add`, `accounts create` 等）前，系統會自動將資料庫備份到 `./.backups/`。
+> 當發生任何寫入動作（`tx add`、`accounts create` 等）前，系統會自動將資料庫備份到 `./.backups/`。
+> **支援 PostgreSQL 和 SQLite (.gnucash) 兩種後端。**
 > 
 > **🖥️ 使用 Web UI 一鍵還原 (推薦)**
-> 當您執行 `docker compose up -d` 啟動 PostgreSQL 的同時，我們已經設定讓 `gnucash-cli` 的 Web UI 一併啟動了！
-> 1. 您只需打開瀏覽器至 Server 的 IP：`http://<Server_IP>:8000/ui/backups`
-> 2. 從精美的清單中挑選動作前的備份檔案，點擊「還原」即可瞬間倒回完美帳本狀態！
+> 當您執行 `docker compose up -d` 啟動 PostgreSQL 的同時，Web UI 一併啟動了！
+> 1. 打開瀏覽器至 Server 的 IP：`http://<Server_IP>:8000/ui/backups`
+> 2. 從清單中挑選動作前的備份檔案，點擊「Restore」即可倒回帳本狀態！
 > 
 > **💻 使用 CLI 還原**
 > 您也可以透過終端機執行：`./docker-gcash.sh db list-backups` 與 `./docker-gcash.sh db restore --file .backups/xxx.sql` 來手動處理。
 
 #### 方案 B：本地輕量 WEB API (FastAPI) — 【不用轉移資料庫的折衷方案】
 如果堅持要將 SQLite 檔案留在本地電腦：
-1. 在本地電腦安裝本專案的 Web 相依 (`pip install .[api]`) 或手動補齊 `fastapi`, `uvicorn`。
+1. 在本地電腦安裝本專案 (`pip install -e .`)。
 2. 配置 API Key（強烈建議）：
-   設定環境變數 `GNUCASH_API_KEY=your-secret-key` 或在 `~/.gnucash-cli/config.yaml` 寫入 `api_key: your-secret-key`。
-   若未設定，系統將處於無認證的開發模式。
+   設定環境變數 `GNUCASH_API_KEY=your-secret-key`（優先），或在 `~/.gnucash-cli/config.yaml` 寫入 `api_key: your-secret-key`。
+   若未設定，系統將印出警告但仍允許啟動（開發模式）。
 3. 在本地終端機啟動：
    ```bash
    gcash -b my.gnucash serve --port 8000
@@ -153,12 +164,28 @@ gcash -b my.gnucash currencies update-prices
 gcash -b my.gnucash currencies update-prices --base USD
 ```
 
+### 資料庫備份與還原
+
+```bash
+# 手動備份
+gcash -b my.gnucash db backup
+
+# 列出備份
+gcash -b my.gnucash db list-backups
+
+# 從備份還原
+gcash -b my.gnucash db restore --file .backups/sqlite_backup_manual_20260405_163000.gnucash
+```
+
+> 寫入操作（`tx add`、`accounts create`）會自動觸發備份，可透過 `--no-auto-backup` 停用。
+
 ## 全局選項
 
 | 選項 | 說明 |
 |------|------|
 | `--book`, `-b` | 指定 GnuCash 帳本路徑 |
 | `--config` | 指定配置文件路徑 |
+| `-v`, `--verbose` | 啟用詳細日誌輸出（DEBUG 等級） |
 | `--version` | 顯示版本 |
 | `--help` | 顯示說明 |
 
@@ -170,7 +197,7 @@ gcash -b my.gnucash currencies update-prices --base USD
 
 ### 如何讓 Agent 接上 GnuCash MCP Server？
 
-如果您使用支援 MCP 的框架 (例如 OpenClaw, Claude Desktop, 或 Cursor)：
+如果您使用支援 MCP 的框架 (例如 Claude Desktop 或 Cursor)：
 
 設定它們的 `mcpServers` 組態檔（在此以連接同台 Server 上的 Docker 為例）：
 
@@ -198,6 +225,42 @@ gcash -b my.gnucash currencies update-prices --base USD
 
 > **原理**：這會啟動一個拋棄式的 CLI 容器，並透過 Standard I/O (stdio) 建立標準安全的 MCP 通道，Agent 從此就能透過標準化的 Tools Schema，輕易地對您的 PostgreSQL 帳本操作，過程完全不用撰寫與維護 Shell Script！
 
+---
+
+## 🔌 API Endpoints
+
+透過 `gcash serve` 啟動的 FastAPI server 提供以下 endpoints：
+
+| Method | Path | 認證 | 說明 |
+|--------|------|------|------|
+| `GET` | `/api/health` | ❌ | 檢查伺服器狀態和帳本路徑 |
+| `POST` | `/api/tx/add` | ✅ | 新增交易 |
+| `GET` | `/api/backups` | ✅ | 列出可用備份 |
+| `POST` | `/api/backups/restore` | ✅ | 從指定備份還原資料庫 |
+| `GET` | `/ui/backups` | ✅ | Web 備份還原介面 |
+
+**認證方式：** 在請求 header 中加入 `X-API-Key: your-key`。
+API Key 來源優先順序：`GNUCASH_API_KEY` 環境變數 > `config.yaml` 的 `api_key`。
+
+**POST /api/tx/add 請求格式：**
+```json
+{
+  "description": "午餐",
+  "date": "2026-04-06",
+  "debits": ["90_費用:用餐:正餐 150"],
+  "credits": ["資産:A0現金:錢包 150"],
+  "notes": "備註（選填）",
+  "currency": "TWD"
+}
+```
+
+**POST /api/backups/restore 請求格式：**
+```json
+{
+  "filename": "sqlite_backup_pre_tx_20260405_163000.gnucash"
+}
+```
+
 ## 輸出格式
 
 所有命令都支持 `--format table`（預設，人類可讀）和 `--format json`（適合 Agent 解析）。
@@ -210,3 +273,6 @@ gcash -b my.gnucash currencies update-prices --base USD
 - rich ≥ 13.0
 - pyyaml ≥ 6.0
 - requests ≥ 2.28.0
+- fastapi ≥ 0.100.0（API server）
+- uvicorn ≥ 0.22.0（API server）
+- mcp ≥ 1.2.0（MCP server）
