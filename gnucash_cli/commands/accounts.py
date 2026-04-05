@@ -1,0 +1,93 @@
+"""Account management commands."""
+
+import click
+import piecash
+
+from gnucash_cli.config import resolve_book_path, load_config
+from gnucash_cli.utils import (
+    build_account_tree_data,
+    console,
+    error,
+    output_result,
+    print_account_tree,
+    success,
+    safe_open_book,
+)
+from gnucash_cli.service import list_accounts as service_list_accounts
+from gnucash_cli.service import create_account as service_create_account
+
+
+@click.group("accounts")
+def accounts_group():
+    """Manage accounts (list, create)."""
+    pass
+
+
+@accounts_group.command("list")
+@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table",
+              help="Output format.")
+@click.option("--type", "account_type", default=None,
+              help="Filter by account type (ASSET, BANK, CASH, EXPENSE, INCOME, LIABILITY, EQUITY, CREDIT).")
+@click.pass_context
+def list_accounts(ctx, fmt, account_type):
+    """List all accounts in the book."""
+    book_path = resolve_book_path(ctx.obj.get("book"), ctx.obj["config"])
+
+    try:
+        if fmt == "json":
+            result = service_list_accounts(book_path, account_type)
+            output_result(result, fmt="json")
+        else:
+            with safe_open_book(book_path, readonly=True, open_if_lock=True) as book:
+                print_account_tree(book, type_filter=account_type.upper() if account_type else None)
+    except Exception as e:
+        error(f"Failed to list accounts: {e}")
+        raise SystemExit(1)
+
+
+@accounts_group.command("create")
+@click.option("--name", required=True, help="Account name.")
+@click.option("--type", "account_type", required=True,
+              type=click.Choice(["ASSET", "BANK", "CASH", "CREDIT", "LIABILITY",
+                                 "INCOME", "EXPENSE", "EQUITY", "RECEIVABLE", "PAYABLE",
+                                 "MUTUAL", "STOCK", "TRADING"],
+                                case_sensitive=False),
+              help="Account type.")
+@click.option("--parent", "parent_fullname", default=None,
+              help="Parent account fullname (e.g. 'Expenses'). Defaults to root account.")
+@click.option("--currency", default=None,
+              help="Currency for this account (ISO code). Defaults to config default_currency.")
+@click.option("--placeholder", is_flag=True, default=False,
+              help="Mark as placeholder (cannot hold transactions directly).")
+@click.option("--description", default="", help="Account description.")
+@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table",
+              help="Output format.")
+@click.option("--no-auto-backup", is_flag=True, help="Disable automatic database backup before this action.")
+@click.pass_context
+def create_account(ctx, name, account_type, parent_fullname, currency, placeholder, description, fmt, no_auto_backup):
+    """Create a new account."""
+    config = ctx.obj["config"]
+    book_path = resolve_book_path(ctx.obj.get("book"), config)
+
+    try:
+        result = service_create_account(
+            book_path=book_path,
+            name=name,
+            account_type=account_type,
+            parent_fullname=parent_fullname,
+            currency_code=currency,
+            placeholder=placeholder,
+            description=description,
+            config=config,
+            no_auto_backup=no_auto_backup
+        )
+
+        if fmt == "json":
+            output_result(result, fmt="json")
+        else:
+            acc = result["account"]
+            success(f"Created account: {acc['fullname']} [{acc['type']}] ({acc['currency']})")
+
+    except Exception as e:
+        error(f"Failed to create account: {e}")
+        raise SystemExit(1)

@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+*.venv/
+.venv/
+venv/
+.env
+
+# Python test & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# GnuCash backups & logs
+*.gnucash.*.gnucash
+*.gnucash.*.log
+.backups/
+
+# GnuCash book files (user data, should not be in repo)
+*.gnucash
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temp test artifacts
+test_out.txt
+test_err.txt
+tx.json
+
+# Node
+node_modules/
+package-lock.json
+
+# Docker
+postgres_data/

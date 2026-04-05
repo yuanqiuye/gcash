@@ -1,0 +1,67 @@
+import os
+import yaml
+import pytest
+from unittest.mock import patch
+from pathlib import Path
+
+from gnucash_cli.config import load_config, resolve_book_path, _expand_path
+
+def test_load_config_defaults(tmp_path):
+    """Test load_config returns defaults when no config file exists."""
+    config_file = tmp_path / "non_existent.yaml"
+    config = load_config(str(config_file))
+    
+    assert config["default_currency"] == "TWD"
+    assert config["default_book"] is None
+
+def test_load_config_override_from_yaml(tmp_path):
+    """Test load_config overrides defaults with yaml values."""
+    config_file = tmp_path / "config.yaml"
+    with open(config_file, "w") as f:
+        yaml.dump({"default_currency": "USD", "default_book": "/path/to/book.gnucash"}, f)
+        
+    config = load_config(str(config_file))
+    
+    assert config["default_currency"] == "USD"
+    assert config["default_book"] == "/path/to/book.gnucash"
+
+@patch.dict(os.environ, {}, clear=True)
+def test_resolve_book_path_priority(sample_config):
+    """Test resolve_book_path priority: CLI > env > config"""
+    
+    # 1. CLI has highest priority
+    with patch.dict(os.environ, {"GNUCASH_BOOK": "/env/book.gnucash"}):
+        path = resolve_book_path("/cli/book.gnucash", sample_config)
+        assert path.endswith("book.gnucash")
+        assert "cli" in path
+        
+    # 2. Env has second priority
+    with patch.dict(os.environ, {"GNUCASH_BOOK": "/env/book.gnucash"}):
+        path = resolve_book_path(None, sample_config)
+        assert path.endswith("book.gnucash")
+        assert "env" in path
+        
+    # 3. Config has third priority
+    path = resolve_book_path(None, sample_config)
+    assert path.endswith("default.gnucash")
+    assert "default.gnucash" in path
+
+def test_resolve_book_path_missing(sample_config):
+    """Test resolve_book_path raises error when no path is provided."""
+    empty_config = {"default_currency": "TWD"}
+    
+    # Import click here because click_missing_book_error returns click.UsageError
+    import click
+    with pytest.raises(click.UsageError):
+        resolve_book_path(None, empty_config)
+
+def test_expand_path():
+    """Test _expand_path expands ~ and returns absolute path."""
+    home = str(Path.home())
+    expanded = _expand_path("~/test.gnucash")
+    assert expanded.startswith(home)
+    assert "test.gnucash" in expanded
+    
+    # Test relative path
+    rel_expanded = _expand_path("relative.gnucash")
+    assert rel_expanded == str(Path("relative.gnucash").resolve())

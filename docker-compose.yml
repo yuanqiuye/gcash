@@ -1,0 +1,47 @@
+# 此架構專供方案 A (Server-local 資料庫協作) 使用
+# 在您的伺服器 (Server) 啟動這個 PostgreSQL 資料庫，GnuCash 與 Agent 均連線此處
+version: "3.8"
+
+services:
+  # GnuCash 資料庫
+  gnucash-db:
+    image: postgres:15-alpine
+    container_name: gnucash_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gnucash}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnucash_password}
+      POSTGRES_DB: ${POSTGRES_DB:-gnucash_data}
+    ports:
+      - "5432:5432" # 開啟本機 5432 Port，或是透過 VPN 存取
+    volumes:
+      # 【實體解耦】不再放進 Docker 隱藏卷宗，直接存到專案的 postgres_data 裡，讓您未來直接壓縮帶走
+      - ./postgres_data:/var/lib/postgresql/data
+    networks:
+      - gnucash_net
+
+  # Web UI 控制台與 API Server
+  gnucash-cli:
+    build: .
+    image: gnucash-cli:latest
+    container_name: gnucash_cli_agent
+    environment:
+      # 當 GnuCash 軟體「另存新檔」到此 PostgreSQL 後，您可以將 CLI 的設定檔指向資料庫 URL
+      # 格式: postgresql://<usr>:<password>@<host>:<port>/<db>
+      GNUCASH_BOOK: "postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:-gnucash_password}@gnucash-db/${POSTGRES_DB:-gnucash_data}"
+      # 可選：設定 API Key 增強安全性（Agent 請求時需帶入 X-API-Key 標頭）
+      # 建議使用 .env 檔設定 GNUCASH_API_KEY，不要直接寫在 docker-compose.yml
+      GNUCASH_API_KEY: ${GNUCASH_API_KEY:-your-secret-api-key}
+    ports:
+      - "8000:8000" # Web UI / API 存取埠
+    volumes:
+      # 掛載本地端的 .backups 目錄到容器工作區內，確保所有自動備份都能永久保存於 Server 硬碟
+      - ./.backups:/app/.backups
+    networks:
+      - gnucash_net
+    depends_on:
+      - gnucash-db
+    command: ["gcash", "serve", "--host", "0.0.0.0", "--port", "8000"]
+
+networks:
+  gnucash_net:
