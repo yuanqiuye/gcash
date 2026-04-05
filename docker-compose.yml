@@ -1,9 +1,9 @@
-# 此架構專供方案 A (Server-local 資料庫協作) 使用
-# 在您的伺服器 (Server) 啟動這個 PostgreSQL 資料庫，GnuCash 與 Agent 均連線此處
+# This architecture is designed for Option A (Server-local database collaboration)
+# Start this PostgreSQL database on your server; both GnuCash and the Agent connect here
 version: "3.8"
 
 services:
-  # GnuCash 資料庫
+  # GnuCash database
   gnucash-db:
     image: postgres:15-alpine
     container_name: gnucash_postgres
@@ -13,29 +13,32 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnucash_password}
       POSTGRES_DB: ${POSTGRES_DB:-gnucash_data}
     ports:
-      - "5432:5432" # 開啟本機 5432 Port，或是透過 VPN 存取
+      - "5432:5432" # Expose port 5432 locally or via VPN
     volumes:
-      # 【實體解耦】不再放進 Docker 隱藏卷宗，直接存到專案的 postgres_data 裡，讓您未來直接壓縮帶走
+      # [Physical decoupling] Store in project's postgres_data directory instead of Docker hidden volumes,
+      # so you can easily archive or move it later
       - ./postgres_data:/var/lib/postgresql/data
     networks:
       - gnucash_net
 
-  # Web UI 控制台與 API Server
+  # Web UI console and API Server
   gnucash-cli:
     build: .
     image: gnucash-cli:latest
     container_name: gnucash_cli_agent
     environment:
-      # 當 GnuCash 軟體「另存新檔」到此 PostgreSQL 後，您可以將 CLI 的設定檔指向資料庫 URL
-      # 格式: postgresql://<usr>:<password>@<host>:<port>/<db>
+      # After saving your GnuCash book to this PostgreSQL via "Save As", you can point
+      # the CLI config to the database URL.
+      # Format: postgresql://<usr>:<password>@<host>:<port>/<db>
       GNUCASH_BOOK: "postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:-gnucash_password}@gnucash-db/${POSTGRES_DB:-gnucash_data}"
-      # 可選：設定 API Key 增強安全性（Agent 請求時需帶入 X-API-Key 標頭）
-      # 建議使用 .env 檔設定 GNUCASH_API_KEY，不要直接寫在 docker-compose.yml
+      # Optional: Set API Key for enhanced security (Agent requests must include X-API-Key header)
+      # Recommended: use a .env file to set GNUCASH_API_KEY, do not hardcode in docker-compose.yml
       GNUCASH_API_KEY: ${GNUCASH_API_KEY:-your-secret-api-key}
     ports:
-      - "8000:8000" # Web UI / API 存取埠
+      - "8000:8000" # Web UI / API access port
     volumes:
-      # 掛載本地端的 .backups 目錄到容器工作區內，確保所有自動備份都能永久保存於 Server 硬碟
+      # Mount local .backups directory into the container workspace so all automatic backups
+      # are permanently saved on the server disk
       - ./.backups:/app/.backups
     networks:
       - gnucash_net

@@ -1,8 +1,8 @@
-# gcash CLI 預設配置
-# 複製此文件到 ~/.gnucash-cli/config.yaml
+# gcash CLI default configuration
+# Copy this file to ~/.gnucash-cli/config.yaml
 
-# 預設幣別（ISO 4217）
+# Default currency (ISO 4217)
 default_currency: TWD
 
-# 預設帳本路徑
+# Default book path
 # default_book: ~/Documents/my_finance.gnucash
