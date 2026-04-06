@@ -23,8 +23,7 @@ services:
 
   # Web UI console and API Server
   gnucash-cli:
-    build: .
-    image: gnucash-cli:latest
+    image: ghcr.io/yuanqiuye/gcash:master
     container_name: gnucash_cli_agent
     environment:
       # After saving your GnuCash book to this PostgreSQL via "Save As", you can point

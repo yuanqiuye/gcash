@@ -214,7 +214,7 @@ Configure their `mcpServers` config file (example connecting to Docker on the sa
         "gnucash-cli_gnucash_net",
         "-v",
         "./.backups:/app/.backups",
-        "gnucash-cli:latest",
+        "ghcr.io/yuanqiuye/gcash:master",
         "gcash",
         "mcp"
       ]
