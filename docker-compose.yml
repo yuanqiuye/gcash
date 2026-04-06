@@ -34,6 +34,8 @@ services:
       # Optional: Set API Key for enhanced security (Agent requests must include X-API-Key header)
       # Recommended: use a .env file to set GNUCASH_API_KEY, do not hardcode in docker-compose.yml
       GNUCASH_API_KEY: ${GNUCASH_API_KEY:-your-secret-api-key}
+      # Container timezone for correct timestamp display (e.g. Asia/Taipei, America/New_York)
+      TZ: ${TZ:-UTC}
     ports:
       - "8000:8000" # Web UI / API access port
     volumes:
