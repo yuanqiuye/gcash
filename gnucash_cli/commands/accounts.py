@@ -1,20 +1,19 @@
 """Account management commands."""
 
 import click
-import piecash
 
-from gnucash_cli.config import resolve_book_path, load_config
-from gnucash_cli.utils import (
-    build_account_tree_data,
-    console,
+from gnucash_cli.book_access import safe_open_book
+from gnucash_cli.cli_safety import resolve_no_auto_backup
+from gnucash_cli.config import resolve_book_path
+from gnucash_cli.exceptions import GCashError
+from gnucash_cli.presentation import (
     error,
     output_result,
     print_account_tree,
     success,
-    safe_open_book,
 )
-from gnucash_cli.service import list_accounts as service_list_accounts
-from gnucash_cli.service import create_account as service_create_account
+from gnucash_cli.services.accounts import create_account as service_create_account
+from gnucash_cli.services.accounts import list_accounts as service_list_accounts
 
 
 @click.group("accounts")
@@ -38,9 +37,9 @@ def list_accounts(ctx, fmt, account_type):
             result = service_list_accounts(book_path, account_type)
             output_result(result, fmt="json")
         else:
-            with safe_open_book(book_path, readonly=True, open_if_lock=True) as book:
+            with safe_open_book(book_path, readonly=True) as book:
                 print_account_tree(book, type_filter=account_type.upper() if account_type else None)
-    except Exception as e:
+    except GCashError as e:
         error(f"Failed to list accounts: {e}")
         raise SystemExit(1)
 
@@ -62,12 +61,15 @@ def list_accounts(ctx, fmt, account_type):
 @click.option("--description", default="", help="Account description.")
 @click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table",
               help="Output format.")
-@click.option("--no-auto-backup", is_flag=True, help="Disable automatic database backup before this action.")
+@click.option("--unsafe-no-auto-backup", "unsafe_no_auto_backup", is_flag=True,
+              help="Disable automatic safety backup. Requires allow_unsafe_no_auto_backup: true.")
+@click.option("--no-auto-backup", "legacy_no_auto_backup", is_flag=True, hidden=True)
 @click.pass_context
-def create_account(ctx, name, account_type, parent_fullname, currency, placeholder, description, fmt, no_auto_backup):
+def create_account(ctx, name, account_type, parent_fullname, currency, placeholder, description, fmt, unsafe_no_auto_backup, legacy_no_auto_backup):
     """Create a new account."""
     config = ctx.obj["config"]
     book_path = resolve_book_path(ctx.obj.get("book"), config)
+    no_auto_backup = resolve_no_auto_backup(config, unsafe_no_auto_backup or legacy_no_auto_backup)
 
     try:
         result = service_create_account(
@@ -88,6 +90,6 @@ def create_account(ctx, name, account_type, parent_fullname, currency, placehold
             acc = result["account"]
             success(f"Created account: {acc['fullname']} [{acc['type']}] ({acc['currency']})")
 
-    except Exception as e:
+    except GCashError as e:
         error(f"Failed to create account: {e}")
         raise SystemExit(1)

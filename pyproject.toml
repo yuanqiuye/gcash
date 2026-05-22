@@ -7,7 +7,7 @@ name = "gnucash-cli"
 version = "0.1.0"
 description = "CLI tool for GnuCash bookkeeping, designed for AI agent automation"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
     "piecash>=1.2.0",
@@ -19,10 +19,11 @@ dependencies = [
     "uvicorn>=0.22.0",
     "pydantic>=2.0.0",
     "mcp>=1.2.0",
+    "psycopg2-binary>=2.9",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest", "pytest-cov", "ruff>=0.8.0"]
 test = ["pytest", "pytest-cov"]
 
 [project.scripts]
@@ -30,3 +31,19 @@ gcash = "gnucash_cli.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["gnucash_cli*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that require external services such as a disposable PostgreSQL database",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"gnucash_cli/cli.py" = ["E402"]

@@ -1,7 +1,14 @@
-import pytest
-import os
 from unittest.mock import MagicMock
-from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime_dirs(tmp_path, monkeypatch):
+    """Keep lock and backup runtime files out of the user's home/workspace."""
+    monkeypatch.setenv("GNUCASH_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setenv("GNUCASH_BACKUP_DIR", str(tmp_path / "backups"))
+
 
 @pytest.fixture
 def sample_config():

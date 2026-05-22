@@ -1,15 +1,20 @@
 """Currency management commands."""
 
-import logging
-from datetime import date
-from decimal import Decimal
-
 import click
-import piecash
 
+from gnucash_cli.cli_safety import resolve_no_auto_backup
 from gnucash_cli.config import resolve_book_path
-from gnucash_cli.utils import console, error, output_result, success, safe_open_book, logger
-from gnucash_cli.commands.db import auto_backup_if_needed
+from gnucash_cli.exceptions import GCashError
+from gnucash_cli.presentation import console, error, output_result, success
+from gnucash_cli.services.currencies import (
+    add_currency as service_add_currency,
+)
+from gnucash_cli.services.currencies import (
+    list_currencies as service_list_currencies,
+)
+from gnucash_cli.services.currencies import (
+    update_prices as service_update_prices,
+)
 
 
 @click.group("currencies")
@@ -28,33 +33,19 @@ def list_currencies(ctx, fmt):
     book_path = resolve_book_path(ctx.obj.get("book"), config)
 
     try:
-        with safe_open_book(book_path, readonly=True, open_if_lock=True) as book:
-            currencies = [
-                c for c in book.commodities
-                if c.namespace == "CURRENCY"
-            ]
-            data = [
-                {
-                    "mnemonic": c.mnemonic,
-                    "fullname": c.fullname or c.mnemonic,
-                    "fraction": c.fraction,
-                }
-                for c in currencies
-            ]
-
-            if fmt == "json":
-                output_result({"currencies": data}, fmt="json")
-            else:
-                from rich.table import Table
-                table = Table(title="Currencies")
-                table.add_column("Code", style="cyan", width=6)
-                table.add_column("Name", style="white")
-                table.add_column("Fraction", style="dim")
-                for d in data:
-                    table.add_row(d["mnemonic"], d["fullname"], str(d["fraction"]))
-                console.print(table)
-
-    except Exception as e:
+        result = service_list_currencies(book_path)
+        if fmt == "json":
+            output_result(result, fmt="json")
+        else:
+            from rich.table import Table
+            table = Table(title="Currencies")
+            table.add_column("Code", style="cyan", width=6)
+            table.add_column("Name", style="white")
+            table.add_column("Fraction", style="dim")
+            for currency in result["currencies"]:
+                table.add_row(currency["mnemonic"], currency["fullname"], str(currency["fraction"]))
+            console.print(table)
+    except GCashError as e:
         error(f"Failed to list currencies: {e}")
         raise SystemExit(1)
 
@@ -63,45 +54,29 @@ def list_currencies(ctx, fmt):
 @click.option("--code", required=True, help="ISO 4217 currency code (e.g. USD, EUR, JPY).")
 @click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table",
               help="Output format.")
-@click.option("--no-auto-backup", is_flag=True, help="Disable automatic database backup before this action.")
+@click.option("--unsafe-no-auto-backup", "unsafe_no_auto_backup", is_flag=True,
+              help="Disable automatic safety backup. Requires allow_unsafe_no_auto_backup: true.")
+@click.option("--no-auto-backup", "legacy_no_auto_backup", is_flag=True, hidden=True)
 @click.pass_context
-def add_currency(ctx, code, fmt, no_auto_backup):
+def add_currency(ctx, code, fmt, unsafe_no_auto_backup, legacy_no_auto_backup):
     """Add a new ISO currency to the book."""
     config = ctx.obj["config"]
     book_path = resolve_book_path(ctx.obj.get("book"), config)
-    code = code.upper()
-
-    auto_backup_if_needed(book_path, no_auto_backup, action_name="pre_currency_add")
+    no_auto_backup = resolve_no_auto_backup(config, unsafe_no_auto_backup or legacy_no_auto_backup)
 
     try:
-        with safe_open_book(book_path, readonly=False, open_if_lock=True, do_backup=False) as book:
-            # Check if already exists
-            existing = [c for c in book.commodities if c.namespace == "CURRENCY" and c.mnemonic == code]
-            if existing:
-                error(f"Currency '{code}' already exists in the book.")
-                raise SystemExit(1)
-
-            commodity = piecash.factories.create_currency_from_ISO(code)
-            book.add(commodity)
-            book.save()
-
-            result = {
-                "status": "success",
-                "currency": {
-                    "mnemonic": code,
-                    "fullname": commodity.fullname or code,
-                    "fraction": commodity.fraction,
-                },
-            }
-
-            if fmt == "json":
-                output_result(result, fmt="json")
-            else:
-                success(f"Added currency: {code} ({commodity.fullname})")
-
-    except SystemExit:
-        raise
-    except Exception as e:
+        result = service_add_currency(
+            book_path=book_path,
+            code=code,
+            config=config,
+            no_auto_backup=no_auto_backup,
+        )
+        if fmt == "json":
+            output_result(result, fmt="json")
+        else:
+            currency = result["currency"]
+            success(f"Added currency: {currency['mnemonic']} ({currency['fullname']})")
+    except GCashError as e:
         error(f"Failed to add currency: {e}")
         raise SystemExit(1)
 
@@ -111,126 +86,42 @@ def add_currency(ctx, code, fmt, no_auto_backup):
               help="Base currency for rate fetching. Defaults to config default_currency.")
 @click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table",
               help="Output format.")
-@click.option("--no-auto-backup", is_flag=True, help="Disable automatic database backup before this action.")
+@click.option("--unsafe-no-auto-backup", "unsafe_no_auto_backup", is_flag=True,
+              help="Disable automatic safety backup. Requires allow_unsafe_no_auto_backup: true.")
+@click.option("--no-auto-backup", "legacy_no_auto_backup", is_flag=True, hidden=True)
 @click.pass_context
-def update_prices(ctx, base, fmt, no_auto_backup):
-    """Fetch latest exchange rates and save to the book.
-
-    Uses Open Exchange Rates API (free, no API key, supports 150+ currencies
-    including TWD, JPY, etc.). Rates are stored as Price objects in the book.
-    """
-    import requests
-
+def update_prices(ctx, base, fmt, unsafe_no_auto_backup, legacy_no_auto_backup):
+    """Fetch latest exchange rates and save them to the book."""
     config = ctx.obj["config"]
     book_path = resolve_book_path(ctx.obj.get("book"), config)
+    no_auto_backup = resolve_no_auto_backup(config, unsafe_no_auto_backup or legacy_no_auto_backup)
     base_currency = base or config.get("default_currency", "TWD")
 
-    auto_backup_if_needed(book_path, no_auto_backup, action_name="pre_update_prices")
-
     try:
-        with safe_open_book(book_path, readonly=False, open_if_lock=True, do_backup=False) as book:
-            # Get all currencies in the book except the base
-            currencies = [
-                c for c in book.commodities
-                if c.namespace == "CURRENCY" and c.mnemonic != base_currency
-            ]
+        result = service_update_prices(
+            book_path=book_path,
+            base_currency=base_currency,
+            config=config,
+            no_auto_backup=no_auto_backup,
+        )
 
-            if not currencies:
-                console.print("[dim]No other currencies found in the book.[/dim]")
-                return
+        if fmt == "json":
+            output_result(result, fmt="json")
+            return
 
-            target_codes = [c.mnemonic for c in currencies]
+        if not result["prices"]:
+            console.print("[dim]No other currencies found in the book.[/dim]")
+            return
 
-            # Fetch rates from open.er-api.com (free, no key, supports 150+ currencies)
-            try:
-                logger.info("Fetching exchange rates from open.er-api.com (base=%s)", base_currency)
-                resp = requests.get(
-                    f"https://open.er-api.com/v6/latest/{base_currency}",
-                    timeout=15,
-                )
-                resp.raise_for_status()
-                rate_data = resp.json()
-            except requests.RequestException as e:
-                logger.error("Failed to fetch exchange rates: %s", e)
-                error(f"Failed to fetch exchange rates: {e}")
-                raise SystemExit(1)
-
-            if rate_data.get("result") != "success":
-                error(f"API error: {rate_data.get('error-type', 'unknown error')}")
-                raise SystemExit(1)
-
-            all_rates = rate_data.get("rates", {})
-
-            # Get base commodity
-            try:
-                base_commodity = book.commodities.get(mnemonic=base_currency)
-            except Exception:
-                error(f"Base currency '{base_currency}' not found in book.")
-                raise SystemExit(1)
-
-            from piecash.core.commodity import Price as PiecashPrice
-
-            results = []
-            today = date.today()
-
-            for target_code in target_codes:
-                target_commodity = None
-                for c in currencies:
-                    if c.mnemonic == target_code:
-                        target_commodity = c
-                        break
-                if not target_commodity:
-                    continue
-
-                rate = all_rates.get(target_code)
-                if rate is None or rate == 0:
-                    console.print(f"[yellow]⚠ No rate available for {target_code}, skipping.[/yellow]")
-                    continue
-
-                # API returns: 1 BASE = rate TARGET
-                # GnuCash Price stores: 1 TARGET = X BASE
-                # So: price_value = 1 / rate
-                price_value = (Decimal("1") / Decimal(str(rate))).quantize(Decimal("0.000001"))
-
-                PiecashPrice(
-                    commodity=target_commodity,
-                    currency=base_commodity,
-                    date=today,
-                    value=price_value,
-                    source="user:price-gcash",
-                    type="last",
-                )
-
-                results.append({
-                    "currency": target_code,
-                    "rate": float(price_value),
-                    "meaning": f"1 {target_code} = {price_value} {base_currency}",
-                })
-
-            book.save()
-            logger.info("Updated %d exchange rates (base=%s)", len(results), base_currency)
-
-            if fmt == "json":
-                output_result({
-                    "status": "success",
-                    "base": base_currency,
-                    "date": today.isoformat(),
-                    "prices": results,
-                }, fmt="json")
-            else:
-                success(f"Updated {len(results)} exchange rates (base: {base_currency}, date: {today})")
-                from rich.table import Table
-                table = Table()
-                table.add_column("Currency", style="cyan")
-                table.add_column(f"Rate (per 1 unit in {base_currency})", style="white")
-                table.add_column("Meaning", style="dim")
-                for r in results:
-                    table.add_row(r["currency"], f"{r['rate']:.6f}", r["meaning"])
-                console.print(table)
-
-    except SystemExit:
-        raise
-    except Exception as e:
+        success(f"Updated {len(result['prices'])} exchange rates (base: {result['base']}, date: {result['date']})")
+        from rich.table import Table
+        table = Table()
+        table.add_column("Currency", style="cyan")
+        table.add_column(f"Rate (per 1 unit in {result['base']})", style="white")
+        table.add_column("Meaning", style="dim")
+        for price in result["prices"]:
+            table.add_row(price["currency"], price["rate"], price["meaning"])
+        console.print(table)
+    except GCashError as e:
         error(f"Failed to update prices: {e}")
         raise SystemExit(1)
-

@@ -6,7 +6,6 @@ from typing import Optional
 
 import yaml
 
-
 DEFAULT_CONFIG_DIR = Path.home() / ".gnucash-cli"
 DEFAULT_CONFIG_FILE = DEFAULT_CONFIG_DIR / "config.yaml"
 
@@ -14,6 +13,11 @@ _DEFAULTS = {
     "default_currency": "TWD",
     "default_book": None,
     "api_key": None,
+    "backup_dir": None,
+    "lock_dir": None,
+    "mcp_read_only": False,
+    "mcp_http_api_key": None,
+    "allow_unsafe_no_auto_backup": False,
 }
 
 
@@ -24,7 +28,8 @@ def load_config(config_path: Optional[str] = None) -> dict:
     """
     config = dict(_DEFAULTS)
 
-    path = Path(config_path) if config_path else DEFAULT_CONFIG_FILE
+    env_config = os.environ.get("GNUCASH_CONFIG")
+    path = Path(config_path or env_config) if (config_path or env_config) else DEFAULT_CONFIG_FILE
 
     if path.exists():
         with open(path, "r", encoding="utf-8") as f:

@@ -12,6 +12,7 @@ venv/
 
 # Python test & coverage
 .pytest_cache/
+.pytest-tmp/
 .coverage
 htmlcov/
 .tox/
@@ -20,6 +21,7 @@ htmlcov/
 *.gnucash.*.gnucash
 *.gnucash.*.log
 .backups/
+.locks/
 
 # GnuCash book files (user data, should not be in repo)
 *.gnucash

@@ -21,12 +21,24 @@ warnings.filterwarnings("ignore", message=".*TypeDecorator.*")
 
 import click
 
-from gnucash_cli.config import load_config
+from gnucash_cli.auth import has_exposed_bind_api_key, is_loopback_host
 from gnucash_cli.commands.accounts import accounts_group
-from gnucash_cli.commands.transactions import transactions_group
 from gnucash_cli.commands.currencies import currencies_group
 from gnucash_cli.commands.db import db_group
-from gnucash_cli.utils import setup_logging
+from gnucash_cli.commands.transactions import transactions_group
+from gnucash_cli.config import load_config
+from gnucash_cli.logging_config import setup_logging
+
+
+def _require_api_key_for_exposed_host(host: str, config: dict) -> None:
+    if is_loopback_host(host):
+        return
+    if has_exposed_bind_api_key(config):
+        return
+    raise click.UsageError(
+        "Refusing to expose the API without an API key. Set GNUCASH_API_KEY "
+        "or api_key in config.yaml, or bind to 127.0.0.1 for local development."
+    )
 
 
 @click.group()
@@ -55,6 +67,7 @@ def cli(ctx, book, config_path, verbose):
     ctx.ensure_object(dict)
     ctx.obj["config"] = load_config(config_path)
     ctx.obj["book"] = book
+    ctx.obj["config_path"] = config_path
 
 
 cli.add_command(accounts_group)
@@ -69,18 +82,24 @@ cli.add_command(db_group)
 def serve(ctx, host, port):
     """Start local API server to receive Agent requests (Option B)."""
     import uvicorn
+
     from gnucash_cli.config import resolve_book_path
-    from gnucash_cli.utils import console
+    from gnucash_cli.presentation import console
     
+    _require_api_key_for_exposed_host(host, ctx.obj["config"])
+
     # Export book to env for the server to pick up
     book_path = resolve_book_path(ctx.obj.get("book"), ctx.obj["config"])
     os.environ["GNUCASH_BOOK"] = book_path
+    if ctx.obj.get("config_path"):
+        os.environ["GNUCASH_CONFIG"] = ctx.obj["config_path"]
+    from gnucash_cli.server import create_app
     
     console.print(f"[green]Starting Agent API server on http://{host}:{port}[/green]")
     console.print(f"[dim]Serving book: {book_path}[/dim]")
     console.print("[yellow]Press Ctrl+C to stop the server[/yellow]")
     
-    uvicorn.run("gnucash_cli.server:app", host=host, port=port, log_level="info")
+    uvicorn.run(create_app(config=ctx.obj["config"], book_path=book_path), host=host, port=port, log_level="info")
 
 @cli.command("mcp")
 @click.pass_context
@@ -89,11 +108,36 @@ def mcp(ctx):
     from gnucash_cli.config import resolve_book_path
     from gnucash_cli.mcp_server import start_mcp_stdio_server
     
-    # Export book for the subprocesses called by the MCP tools
+    # Export book for MCP tools.
     book_path = resolve_book_path(ctx.obj.get("book"), ctx.obj["config"])
     os.environ["GNUCASH_BOOK"] = book_path
+    if ctx.obj.get("config_path"):
+        os.environ["GNUCASH_CONFIG"] = ctx.obj["config_path"]
     
     start_mcp_stdio_server()
+
+
+@cli.command("mcp-http")
+@click.option("--host", default="127.0.0.1", help="Host to bind the Streamable HTTP MCP server to.")
+@click.option("--port", default=8765, type=int, help="Port to bind the Streamable HTTP MCP server to.")
+@click.option("--path", "mcp_path", default="/mcp", help="HTTP path for the MCP endpoint.")
+@click.pass_context
+def mcp_http(ctx, host, port, mcp_path):
+    """Start the MCP server over Streamable HTTP."""
+    from gnucash_cli.config import resolve_book_path
+    from gnucash_cli.mcp_server import start_mcp_http_server
+    from gnucash_cli.presentation import console
+
+    _require_api_key_for_exposed_host(host, ctx.obj["config"])
+
+    book_path = resolve_book_path(ctx.obj.get("book"), ctx.obj["config"])
+    os.environ["GNUCASH_BOOK"] = book_path
+    if ctx.obj.get("config_path"):
+        os.environ["GNUCASH_CONFIG"] = ctx.obj["config_path"]
+
+    path = mcp_path if mcp_path.startswith("/") else f"/{mcp_path}"
+    console.print(f"[green]Starting MCP Streamable HTTP server on http://{host}:{port}{path}[/green]")
+    start_mcp_http_server(host=host, port=port, path=path)
 
 def main():
     """Entry point that ensures proper encoding on Windows."""

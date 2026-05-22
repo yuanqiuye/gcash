@@ -1,10 +1,12 @@
 import os
-import yaml
-import pytest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
-from gnucash_cli.config import load_config, resolve_book_path, _expand_path
+import pytest
+import yaml
+
+from gnucash_cli.config import _expand_path, load_config, resolve_book_path
+
 
 def test_load_config_defaults(tmp_path):
     """Test load_config returns defaults when no config file exists."""
@@ -24,6 +26,18 @@ def test_load_config_override_from_yaml(tmp_path):
     
     assert config["default_currency"] == "USD"
     assert config["default_book"] == "/path/to/book.gnucash"
+
+
+def test_load_config_uses_env_config_path(tmp_path):
+    """Long-running adapters can inherit the explicit CLI config path."""
+    config_file = tmp_path / "config.yaml"
+    with open(config_file, "w") as f:
+        yaml.dump({"default_currency": "JPY"}, f)
+
+    with patch.dict(os.environ, {"GNUCASH_CONFIG": str(config_file)}):
+        config = load_config()
+
+    assert config["default_currency"] == "JPY"
 
 @patch.dict(os.environ, {}, clear=True)
 def test_resolve_book_path_priority(sample_config):

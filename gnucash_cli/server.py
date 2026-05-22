@@ -1,228 +1,163 @@
 """FastAPI server for remote Agent invocation."""
+
+import logging
 import os
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Depends, Security, Request
-from pydantic import BaseModel
+
+from fastapi import Depends, FastAPI, HTTPException, Request, Security
+from fastapi.responses import HTMLResponse
 from fastapi.security.api_key import APIKeyHeader
+from pydantic import BaseModel, Field
+
+from gnucash_cli.auth import is_api_key_authorized, resolve_api_key
+from gnucash_cli.backup import (
+    execute_restore,
+    get_backups_list,
+    resolve_backup_file,
+)
+from gnucash_cli.book_backend import detect_book_backend
 from gnucash_cli.config import load_config
-from gnucash_cli.service import add_transaction as service_add_transaction
-from gnucash_cli.utils import logger
-import logging
+from gnucash_cli.exceptions import BackupError, GCashError
+from gnucash_cli.logging_config import logger
+from gnucash_cli.server_ui import backup_ui_html
+from gnucash_cli.services.transactions import add_transaction_input as service_add_transaction
+from gnucash_cli.transaction_input import TransactionInput
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-def get_configured_api_key() -> Optional[str]:
-    """Get API Key from environment or config file."""
-    env_key = os.environ.get("GNUCASH_API_KEY")
-    if env_key:
-        return env_key
-    config = load_config()
-    return config.get("api_key")
 
-configured_api_key = get_configured_api_key()
-if not configured_api_key:
-    logging.warning("No API Key configured. Server is running in insecure development mode.")
+class TransactionRequest(TransactionInput):
+    pass
 
-async def verify_api_key(request: Request, api_key: str = Security(api_key_header)):
-    """Dependency to check the API Key."""
-    # Skip check for health endpoint
-    if request.url.path == "/api/health":
-        return api_key
-        
-    if not configured_api_key:
-        return api_key
-        
-    if not api_key or api_key != configured_api_key:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
-        
-    return api_key
-
-app = FastAPI(
-    title="GnuCash Agent API", 
-    description="Local API server for remote Agent bookkeeping. Used for Option B architecture.",
-    dependencies=[Depends(verify_api_key)]
-)
-
-class TransactionRequest(BaseModel):
-    description: str
-    date: Optional[str] = None
-    debits: list[str]
-    credits: list[str]
-    notes: Optional[str] = None
-    currency: Optional[str] = None
-
-_config = load_config()
-
-@app.post("/api/tx/add")
-async def add_transaction(req: TransactionRequest):
-    """Add a new transaction by calling the service layer directly."""
-    book_path = os.environ.get("GNUCASH_BOOK")
-    if not book_path:
-        raise HTTPException(status_code=500, detail="GNUCASH_BOOK context missing")
-
-    try:
-        result = service_add_transaction(
-            book_path=book_path,
-            description=req.description,
-            debits=req.debits,
-            credits_=req.credits,
-            tx_date=req.date,
-            tx_currency=req.currency,
-            notes=req.notes or "",
-            config=_config,
-        )
-        logger.info("API: Transaction added via /api/tx/add: '%s'", req.description)
-        return result
-    except ValueError as e:
-        logger.warning("API: Transaction rejected: %s", e)
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.get("/api/health")
-async def health_check():
-    """Check if the API is running and the book path is set."""
-    return {"status": "ok", "book": os.environ.get("GNUCASH_BOOK")}
-
-from fastapi.responses import HTMLResponse
-
-@app.get("/ui/backups", response_class=HTMLResponse)
-async def backup_ui():
-    """Web interface for restoring database backups."""
-    html_content = """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>GnuCash Agent - Restore Panel</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <script>
-            async function fetchBackups() {
-                const response = await fetch('/api/backups');
-                const data = await response.json();
-                const tbody = document.getElementById('backupList');
-                tbody.innerHTML = '';
-                
-                if (data.backups.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-4 text-center text-sm text-gray-500">No backups found</td></tr>';
-                    return;
-                }
-                
-                data.backups.forEach(b => {
-                    const row = document.createElement('tr');
-                    
-                    row.innerHTML = `
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${b.filename}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${(b.size / 1024).toFixed(2)} KB</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${b.time}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                            <button onclick="restoreBackup('${b.filename}')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded shadow transition-colors duration-200">
-                                ↻ Restore
-                            </button>
-                        </td>
-                    `;
-                    tbody.appendChild(row);
-                });
-            }
-            
-            async function restoreBackup(filename) {
-                if (!confirm(`WARNING\\n\\nAre you sure you want to OVERWRITE the current database using the backup: ${filename}?\\n\\nThis action cannot be undone.`)) {
-                    return;
-                }
-                
-                // Show loading
-                const msgBox = document.getElementById('statusMsg');
-                msgBox.className = 'p-4 mb-4 text-sm text-blue-800 rounded-lg bg-blue-50 block';
-                msgBox.innerText = 'Restoring database, please wait...';
-                
-                try {
-                    const response = await fetch('/api/backups/restore', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ filename: filename })
-                    });
-                    
-                    const result = await response.json();
-                    
-                    if (response.ok && result.status === 'success') {
-                        msgBox.className = 'p-4 mb-4 text-sm text-green-800 rounded-lg bg-green-50 block';
-                        msgBox.innerText = '✅ Success: ' + result.message;
-                    } else {
-                        msgBox.className = 'p-4 mb-4 text-sm text-red-800 rounded-lg bg-red-50 block';
-                        msgBox.innerText = '❌ Error: ' + (result.detail || result.error || 'Unknown error');
-                    }
-                } catch (e) {
-                    msgBox.className = 'p-4 mb-4 text-sm text-red-800 rounded-lg bg-red-50 block';
-                    msgBox.innerText = '❌ Request failed: ' + e.message;
-                }
-            }
-            
-            window.onload = fetchBackups;
-        </script>
-    </head>
-    <body class="bg-gray-100 min-h-screen p-8">
-        <div class="max-w-5xl mx-auto">
-            <div class="flex items-center justify-between mb-2">
-                <h1 class="text-3xl font-bold text-gray-800">GnuCash Agent <span class="text-blue-600">Restore Panel</span></h1>
-                <button onclick="fetchBackups()" class="flex items-center text-sm text-gray-600 hover:text-gray-900 bg-white border border-gray-300 rounded px-3 py-1 shadow-sm">
-                    ↻ Refresh List
-                </button>
-            </div>
-            
-            <p class="text-gray-600 mb-8">Click <b>Restore</b> to instantly revert the database to a previous safe snapshot before the Agent performed an action.</p>
-            
-            <div id="statusMsg" class="hidden font-medium shadow-sm transition-all duration-300"></div>
-            
-            <div class="bg-white shadow overflow-hidden sm:rounded-lg">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Filename</th>
-                            <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Size</th>
-                            <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Creation Time</th>
-                            <th scope="col" class="px-6 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="backupList" class="bg-white divide-y divide-gray-200">
-                        <!-- Filled by JS -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-    return html_content
-
-@app.get("/api/backups")
-async def api_list_backups():
-    """List available database backups."""
-    from gnucash_cli.commands.db import get_backups_list
-    return {"backups": get_backups_list()}
 
 class RestoreRequest(BaseModel):
-    filename: str
+    filename: str = Field(min_length=1)
 
-@app.post("/api/backups/restore")
-async def api_restore_backup(req: RestoreRequest):
-    """Restore the database from a specified backup file."""
-    import os
-    from gnucash_cli.commands.db import execute_restore, _get_backup_dir
-    
-    book_path = os.environ.get("GNUCASH_BOOK")
-    if not book_path:
-        raise HTTPException(status_code=500, detail="GNUCASH_BOOK context missing")
-        
-    # Prevent directory traversal
-    safe_filename = os.path.basename(req.filename)
-    backup_file = os.path.join(_get_backup_dir(), safe_filename)
-    
-    if not os.path.exists(backup_file):
-        raise HTTPException(status_code=404, detail=f"Backup file not found: {safe_filename}")
-        
-    success = execute_restore(book_path, backup_file)
-    if success:
-        logger.warning("API: Database restored from %s", safe_filename)
-        return {"status": "success", "message": f"Successfully restored database from {safe_filename}"}
-    else:
-        logger.error("API: Database restore failed from %s", safe_filename)
-        raise HTTPException(status_code=500, detail="Restore operation failed. Check server logs.")
+
+def get_configured_api_key(config: dict | None = None) -> Optional[str]:
+    """Get API Key from environment or config file."""
+    effective_config = config if config is not None else load_config()
+    return resolve_api_key(effective_config)
+
+
+def _book_backend(book_path: str | None) -> str | None:
+    return detect_book_backend(book_path)
+
+
+def create_app(config: dict | None = None, book_path: str | None = None) -> FastAPI:
+    """Create a configured FastAPI app instance."""
+    app_config = config if config is not None else load_config()
+    configured_api_key = get_configured_api_key(app_config)
+    if not configured_api_key:
+        logging.warning("No API Key configured. Server is running in insecure development mode.")
+
+    async def verify_api_key(request: Request, api_key: str = Security(api_key_header)):
+        if request.url.path in {"/api/health", "/ui/backups"}:
+            return api_key
+
+        expected_key = request.app.state.api_key
+        if not expected_key:
+            return api_key
+
+        if not is_api_key_authorized(expected_key=expected_key, x_api_key=api_key):
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+        return api_key
+
+    app = FastAPI(
+        title="GnuCash Agent API",
+        description="Local API server for remote Agent bookkeeping. Used for Option B architecture.",
+        dependencies=[Depends(verify_api_key)],
+    )
+    app.state.config = app_config
+    app.state.book_path = book_path or os.environ.get("GNUCASH_BOOK")
+    app.state.api_key = configured_api_key
+
+    @app.post("/api/tx/add")
+    async def add_transaction(req: TransactionRequest, request: Request):
+        """Add a new transaction by calling the service layer directly."""
+        active_book_path = request.app.state.book_path
+        if not active_book_path:
+            raise HTTPException(status_code=500, detail="GNUCASH_BOOK context missing")
+
+        try:
+            result = service_add_transaction(
+                book_path=active_book_path,
+                tx_input=req,
+                config=request.app.state.config,
+            )
+            logger.info("API: Transaction added via /api/tx/add: '%s'", req.description)
+            return result
+        except GCashError as e:
+            logger.warning("API: Transaction rejected: %s", e)
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/health")
+    async def health_check(request: Request):
+        """Check if the API is running and the book path is set."""
+        active_book_path = request.app.state.book_path
+        return {
+            "status": "ok",
+            "book_configured": bool(active_book_path),
+            "backend": _book_backend(active_book_path),
+        }
+
+    @app.get("/ui/backups", response_class=HTMLResponse)
+    async def backup_ui():
+        """Web interface for restoring database backups."""
+        return backup_ui_html()
+
+    @app.get("/api/backups")
+    async def api_list_backups(request: Request):
+        """List available database backups."""
+        return {
+            "backups": get_backups_list(
+                book_path=request.app.state.book_path,
+                config=request.app.state.config,
+            )
+        }
+
+    @app.post("/api/backups/restore")
+    async def api_restore_backup(req: RestoreRequest, request: Request):
+        """Restore the database from a specified backup file."""
+        active_book_path = request.app.state.book_path
+        if not active_book_path:
+            raise HTTPException(status_code=500, detail="GNUCASH_BOOK context missing")
+
+        safe_filename = os.path.basename(req.filename)
+        backup_file = resolve_backup_file(
+            safe_filename,
+            book_path=active_book_path,
+            config=request.app.state.config,
+        )
+
+        if not os.path.exists(backup_file):
+            raise HTTPException(status_code=404, detail=f"Backup file not found: {safe_filename}")
+
+        try:
+            execute_restore(active_book_path, backup_file, config=request.app.state.config)
+            logger.warning("API: Database restored from %s", safe_filename)
+            return {"status": "success", "message": f"Successfully restored database from {safe_filename}"}
+        except BackupError as e:
+            logger.error("API: Database restore failed: %s", e)
+            raise HTTPException(status_code=500, detail=str(e))
+        except GCashError as e:
+            logger.warning("API: Database restore rejected: %s", e)
+            raise HTTPException(status_code=409, detail=str(e))
+
+    return app
+
+
+class LazyApp:
+    """ASGI wrapper that preserves `gnucash_cli.server:app` without import-time config loading."""
+
+    def __init__(self):
+        self._app: FastAPI | None = None
+
+    async def __call__(self, scope, receive, send):
+        if self._app is None:
+            self._app = create_app()
+        await self._app(scope, receive, send)
+
+
+app = LazyApp()

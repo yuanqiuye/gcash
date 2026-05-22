@@ -1,21 +1,22 @@
 """Transaction management commands."""
 
 from datetime import datetime
+from decimal import Decimal
 
 import click
 
+from gnucash_cli.book_access import safe_open_book
+from gnucash_cli.cli_safety import resolve_no_auto_backup
 from gnucash_cli.config import resolve_book_path
-from gnucash_cli.utils import (
+from gnucash_cli.exceptions import GCashError
+from gnucash_cli.presentation import (
     console,
     error,
     output_result,
     print_transactions_table,
     success,
-    safe_open_book,
 )
-from gnucash_cli.service import add_transaction as service_add_transaction
-from gnucash_cli.service import parse_split_spec as _parse_split_spec
-from gnucash_cli.service import build_split as _build_split
+from gnucash_cli.services.transactions import add_transaction as service_add_transaction
 
 
 @click.group("tx")
@@ -39,9 +40,11 @@ def transactions_group():
               help="Load tx parameters from JSON file to bypass shell encoding limitations (Agent Friendly).")
 @click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table",
               help="Output format.")
-@click.option("--no-auto-backup", is_flag=True, help="Disable automatic database backup before this transaction.")
+@click.option("--unsafe-no-auto-backup", "unsafe_no_auto_backup", is_flag=True,
+              help="Disable automatic safety backup. Requires allow_unsafe_no_auto_backup: true.")
+@click.option("--no-auto-backup", "legacy_no_auto_backup", is_flag=True, hidden=True)
 @click.pass_context
-def add_transaction(ctx, description, debits, credits_, tx_date, tx_currency, notes, file_path, fmt, no_auto_backup):
+def add_transaction(ctx, description, debits, credits_, tx_date, tx_currency, notes, file_path, fmt, unsafe_no_auto_backup, legacy_no_auto_backup):
     """Add a new transaction.
 
     Multi-currency example:
@@ -69,6 +72,7 @@ def add_transaction(ctx, description, debits, credits_, tx_date, tx_currency, no
 
     config = ctx.obj["config"]
     book_path = resolve_book_path(ctx.obj.get("book"), config)
+    no_auto_backup = resolve_no_auto_backup(config, unsafe_no_auto_backup or legacy_no_auto_backup)
 
     try:
         result = service_add_transaction(
@@ -89,9 +93,10 @@ def add_transaction(ctx, description, debits, credits_, tx_date, tx_currency, no
             tx = result["transaction"]
             success(f"Transaction recorded: {tx['description']} ({tx['date']})")
             for s in tx["splits"]:
-                console.print(f"  {s['account']}: {s['quantity']:+,.2f} {s['currency']}")
+                quantity = Decimal(str(s["quantity"]))
+                console.print(f"  {s['account']}: {quantity:+,.2f} {s['currency']}")
 
-    except Exception as e:
+    except GCashError as e:
         error(f"Failed to add transaction: {e}")
         raise SystemExit(1)
 
@@ -121,7 +126,7 @@ def list_transactions(ctx, account_name, from_date, to_date, limit, fmt):
             error(f"Invalid date format: {e}. Use YYYY-MM-DD.")
             raise SystemExit(1)
 
-        with safe_open_book(book_path, readonly=True, open_if_lock=True) as book:
+        with safe_open_book(book_path, readonly=True) as book:
             transactions = book.transactions
 
             # Filter by date
@@ -147,8 +152,8 @@ def list_transactions(ctx, account_name, from_date, to_date, limit, fmt):
                 for sp in tr.splits:
                     splits_data.append({
                         "account": sp.account.fullname,
-                        "value": float(sp.value),
-                        "quantity": float(sp.quantity),
+                        "value": str(sp.value),
+                        "quantity": str(sp.quantity),
                         "currency": sp.account.commodity.mnemonic if sp.account.commodity else "?",
                         "memo": sp.memo or "",
                     })
@@ -167,6 +172,6 @@ def list_transactions(ctx, account_name, from_date, to_date, limit, fmt):
                 else:
                     console.print("[dim]No transactions found.[/dim]")
 
-    except Exception as e:
+    except GCashError as e:
         error(f"Failed to list transactions: {e}")
         raise SystemExit(1)
