@@ -8,7 +8,7 @@ from typing import Any, Callable
 from gnucash_cli.auth import is_asgi_scope_authorized, resolve_mcp_http_api_key
 from gnucash_cli.config import load_config
 from gnucash_cli.services.accounts import create_account, list_accounts
-from gnucash_cli.services.transactions import add_transaction_input
+from gnucash_cli.services.transactions import add_transaction_input, edit_transaction, list_account_transactions
 from gnucash_cli.transaction_input import TransactionInput, build_transaction_input
 
 ToolHandler = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -40,12 +40,20 @@ def transaction_split_schema() -> dict[str, Any]:
             {
                 "type": "object",
                 "properties": {
-                    "account": {"type": "string", "description": "Account fullname, e.g. Expenses:Food"},
+                    "account_id": {
+                        "type": "string",
+                        "description": "Preferred stable account id returned by gnucash_list_accounts.",
+                    },
+                    "account": {
+                        "type": "string",
+                        "description": "Legacy account fullname or unique account name, e.g. Expenses:Food.",
+                    },
                     "value": {"type": "string", "description": "Positive decimal value in transaction currency"},
                     "currency": {"type": "string", "description": "Optional account currency, e.g. USD"},
                     "quantity": {"type": "string", "description": "Optional positive account-currency quantity"},
                 },
-                "required": ["account", "value"],
+                "required": ["value"],
+                "anyOf": [{"required": ["account_id"]}, {"required": ["account"]}],
                 "additionalProperties": False,
             },
         ]
@@ -85,17 +93,74 @@ def list_accounts_input_schema() -> dict[str, Any]:
     }
 
 
+def list_account_transactions_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "account_id": {
+                "type": "string",
+                "description": "Preferred stable account id returned by gnucash_list_accounts.",
+            },
+            "account": {"type": "string", "description": "Legacy account fullname or unique account name."},
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 10,
+                "description": "Maximum number of most recent transactions to return.",
+            },
+        },
+        "anyOf": [{"required": ["account_id"]}, {"required": ["account"]}],
+        "additionalProperties": False,
+    }
+
+
 def create_account_input_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
             "name": {"type": "string", "description": "Name of the new account"},
             "type": {"type": "string", "description": "Account type (e.g. EXPENSE, BANK, ROOT)"},
-            "parent": {"type": "string", "description": "Full name of the parent account (e.g. Expenses)"},
+            "parent_account_id": {
+                "type": "string",
+                "description": "Preferred stable parent account id returned by gnucash_list_accounts.",
+            },
+            "parent": {"type": "string", "description": "Legacy full name of the parent account (e.g. Expenses)"},
             "currency": {"type": "string", "description": "ISO 4217 currency code (e.g. TWD, USD)"},
             "description": {"type": "string", "description": "Description for the account"},
         },
-        "required": ["name", "type", "parent"],
+        "required": ["name", "type"],
+        "anyOf": [{"required": ["parent_account_id"]}, {"required": ["parent"]}],
+    }
+
+
+def edit_transaction_input_schema() -> dict[str, Any]:
+    split_items = transaction_split_schema()
+    return {
+        "type": "object",
+        "properties": {
+            "transaction_id": {
+                "type": "string",
+                "description": "Stable transaction id returned by gnucash_list_account_transactions.",
+            },
+            "description": {"type": "string", "description": "Optional replacement transaction description."},
+            "date": {"type": "string", "description": "Optional replacement post date in YYYY-MM-DD format."},
+            "notes": {"type": "string", "description": "Optional replacement notes. Use an empty string to clear."},
+            "debits": {
+                "type": "array",
+                "items": split_items,
+                "minItems": 1,
+                "description": "Optional full replacement debit splits. Must be provided with credits.",
+            },
+            "credits": {
+                "type": "array",
+                "items": split_items,
+                "minItems": 1,
+                "description": "Optional full replacement credit splits. Must be provided with debits.",
+            },
+        },
+        "required": ["transaction_id"],
+        "additionalProperties": False,
     }
 
 
@@ -151,15 +216,38 @@ def _handle_list_accounts(book_path: str, _config: dict[str, Any], args: dict[st
     )
 
 
+def _handle_list_account_transactions(book_path: str, _config: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    return list_account_transactions(
+        book_path=book_path,
+        account_id_value=args.get("account_id"),
+        account_fullname=args.get("account"),
+        limit=args.get("limit", 10),
+    )
+
+
 def _handle_create_account(book_path: str, config: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     return create_account(
         book_path=book_path,
         name=args["name"],
         account_type=args["type"],
-        parent_fullname=args["parent"],
+        parent_fullname=args.get("parent"),
+        parent_account_id=args.get("parent_account_id"),
         currency_code=args.get("currency"),
         placeholder=False,
         description=args.get("description", ""),
+        config=config,
+    )
+
+
+def _handle_edit_transaction(book_path: str, config: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    return edit_transaction(
+        book_path=book_path,
+        transaction_id=args["transaction_id"],
+        description=args.get("description"),
+        tx_date=args.get("date"),
+        notes=args["notes"] if "notes" in args else None,
+        debits=args.get("debits"),
+        credits_=args.get("credits"),
         config=config,
     )
 
@@ -180,6 +268,25 @@ TOOL_SPECS = [
         description="List all accounts in the GnuCash book. Returns a tree structure.",
         input_schema=list_accounts_input_schema,
         handler=_handle_list_accounts,
+    ),
+    ToolSpec(
+        name="gnucash_list_account_transactions",
+        description=(
+            "List the most recent transactions touching a specific account. "
+            "Returns transaction_id values for later edits."
+        ),
+        input_schema=list_account_transactions_input_schema,
+        handler=_handle_list_account_transactions,
+    ),
+    ToolSpec(
+        name="gnucash_edit_transaction",
+        description=(
+            "Edit a specific transaction by transaction_id. Can update description, date, notes, "
+            "or replace all splits with balanced debit/credit splits. Automatically backs up first."
+        ),
+        input_schema=edit_transaction_input_schema,
+        handler=_handle_edit_transaction,
+        mutates=True,
     ),
     ToolSpec(
         name="gnucash_create_account",
@@ -287,6 +394,16 @@ def create_mcp_http_app(config: dict[str, Any] | None = None, path: str = "/mcp"
     api_key = get_mcp_http_api_key(effective_config)
     mcp_app = create_mcp_server(config=effective_config)
     session_manager = StreamableHTTPSessionManager(mcp_app, stateless=True)
+    backup_config = dict(effective_config)
+    if api_key and not backup_config.get("api_key"):
+        backup_config["api_key"] = api_key
+
+    from gnucash_cli.server import create_app as create_backup_app
+
+    backup_app = create_backup_app(
+        config=backup_config,
+        book_path=os.environ.get("GNUCASH_BOOK") or effective_config.get("default_book"),
+    )
 
     class MCPHttpASGIApp:
         async def __call__(self, scope, receive, send):
@@ -302,7 +419,13 @@ def create_mcp_http_app(config: dict[str, Any] | None = None, path: str = "/mcp"
             yield
 
     mount_path = path if path.startswith("/") else f"/{path}"
-    return Starlette(routes=[Mount(mount_path, app=MCPHttpASGIApp())], lifespan=lifespan)
+    return Starlette(
+        routes=[
+            Mount(mount_path, app=MCPHttpASGIApp()),
+            Mount("/", app=backup_app),
+        ],
+        lifespan=lifespan,
+    )
 
 
 def start_mcp_http_server(host: str = "127.0.0.1", port: int = 8765, path: str = "/mcp"):

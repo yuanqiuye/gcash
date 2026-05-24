@@ -1,5 +1,7 @@
 """Book data mapping helpers."""
 
+from gnucash_cli.account_lookup import account_id
+
 
 def build_account_tree_data(book) -> list[dict]:
     """Build account data list from a piecash book."""
@@ -12,6 +14,8 @@ def build_account_tree_data(book) -> list[dict]:
             balance = "0"
 
         accounts.append({
+            "id": account_id(acc),
+            "guid": account_id(acc),
             "fullname": acc.fullname,
             "name": acc.name,
             "type": acc.type,

@@ -130,9 +130,9 @@ GnuCash natively supports relational databases. Place the book on a server-side 
 > Write operations are serialized with a per-book lock under `~/.gnucash-cli/locks` by default, so concurrent Agent calls from different working directories do not mutate the same book at the same time. Override with `GNUCASH_LOCK_DIR` or `lock_dir`.
 > 
 > **🖥️ One-Click Restore via Web UI (Recommended)**
-> When you run `docker compose up -d` to start PostgreSQL, the Web UI starts alongside it!
-> 1. Open your browser to the server IP: `http://<Server_IP>:8000/ui/backups`
-> 2. Enter your `GNUCASH_API_KEY` when prompted.
+> When you run the standalone MCP compose stack, the Web UI is served by the same HTTP service as MCP.
+> 1. Open your browser to the server IP: `http://<Server_IP>:8765/ui/backups`
+> 2. Enter your `GNUCASH_MCP_HTTP_API_KEY` when prompted.
 > 3. Pick a backup from before the unwanted action, click "Restore" to revert your book!
 > 
 > **💻 Restore via CLI**
@@ -285,6 +285,65 @@ or:
 Authorization: Bearer change-this-secret
 ```
 
+The same HTTP service also exposes the backup UI and backup APIs on the same port:
+
+```text
+http://<server-ip>:8765/ui/backups
+```
+
+Use the same API key header for protected backup API calls.
+
+### Account Identifiers for Writes
+
+`gnucash_list_accounts` returns both `id` and `guid` for each account. Treat this value as the stable account identifier for write tools.
+
+Preferred transaction split format:
+
+```json
+{
+  "description": "Lunch",
+  "debits": [{"account_id": "expense-account-guid", "value": "150"}],
+  "credits": [{"account_id": "cash-account-guid", "value": "150"}],
+  "currency": "TWD"
+}
+```
+
+Legacy account names/fullnames are still accepted for compatibility, but agents should call `gnucash_list_accounts` first and use `account_id`. This avoids wrong writes when account names are renamed, duplicated, localized, or abbreviated.
+
+To inspect recent activity for one account:
+
+```json
+{
+  "account_id": "cash-account-guid",
+  "limit": 10
+}
+```
+
+Call this through `gnucash_list_account_transactions`. The response includes `transaction_id` and per-split `split_id` values.
+
+To edit a transaction, call `gnucash_edit_transaction` with `transaction_id`. Metadata-only edits are allowed:
+
+```json
+{
+  "transaction_id": "transaction-guid",
+  "description": "Corrected description",
+  "date": "2026-05-24",
+  "notes": "Corrected by MCP"
+}
+```
+
+To change accounts or amounts, replace the full split set by providing both balanced `debits` and `credits`:
+
+```json
+{
+  "transaction_id": "transaction-guid",
+  "debits": [{"account_id": "expense-account-guid", "value": "50"}],
+  "credits": [{"account_id": "cash-account-guid", "value": "50"}]
+}
+```
+
+Partial split edits are intentionally not exposed, because GnuCash transactions must remain balanced.
+
 ### PostgreSQL GUI Lock Check
 
 Before automated writes, PostgreSQL books are checked for active rows in GnuCash's `gnclock` table. If GnuCash GUI has the same SQL book open, writes are refused with a lock error. Read-only tools can still be exposed through MCP read-only mode.
@@ -317,7 +376,7 @@ Each user should get:
 
 AstrBot can remain in its own compose stack and call the selected user's MCP endpoint, for example `http://<server-ip>:8765/mcp`, with that user's API key. The GnuCash GUI should connect to the same user's PostgreSQL database. If the GUI is open, automated writes for that user's MCP service will be rejected by the `gnclock` check.
 
-See `deploy/gnucash-mcp/` for a standalone compose template that includes PostgreSQL, the Streamable HTTP MCP service, per-user backups, read-only mode, and migration notes.
+See `deploy/gnucash-mcp/` for a standalone compose template that includes PostgreSQL, the Streamable HTTP MCP service, the backup/restore HTTP UI, per-user backups, read-only mode, and migration notes.
 
 ---
 

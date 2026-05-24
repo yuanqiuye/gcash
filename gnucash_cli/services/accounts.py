@@ -2,6 +2,7 @@
 
 import piecash
 
+from gnucash_cli.account_lookup import account_id, resolve_account
 from gnucash_cli.book_data import build_account_tree_data
 from gnucash_cli.book_ops import readonly_book, writable_book
 from gnucash_cli.exceptions import ValidationError
@@ -55,6 +56,7 @@ def create_account(
     description: str,
     config: dict,
     no_auto_backup: bool = False,
+    parent_account_id: str | None = None,
 ) -> dict:
     account_type = validate_account_input(name, account_type)
     currency_code = currency_code or config.get("default_currency", "TWD")
@@ -67,11 +69,13 @@ def create_account(
         action_name="pre_create_account",
         no_auto_backup=no_auto_backup,
     ) as book:
-        if parent_fullname:
-            try:
-                parent = book.accounts(fullname=parent_fullname)
-            except Exception:
-                raise ValidationError(f"Parent account '{parent_fullname}' not found.")
+        if parent_account_id or parent_fullname:
+            parent = resolve_account(
+                book,
+                account_id_value=parent_account_id,
+                account_fullname=parent_fullname,
+                require_postable=False,
+            )
         else:
             parent = book.root_account
 
@@ -104,9 +108,12 @@ def create_account(
         return {
             "status": "success",
             "account": {
+                "id": account_id(new_account),
+                "guid": account_id(new_account),
                 "fullname": new_account.fullname,
                 "name": new_account.name,
                 "type": new_account.type,
+                "parent_id": account_id(parent),
                 "currency": currency_code,
                 "placeholder": placeholder,
                 "description": description,

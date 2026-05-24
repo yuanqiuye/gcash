@@ -65,6 +65,32 @@ def test_api_accepts_structured_transaction_splits(monkeypatch, tmp_path):
     assert captured["tx_input"].debits[0].account_fullname == "Expenses:Dining"
 
 
+def test_api_accepts_account_id_transaction_splits(monkeypatch, tmp_path):
+    server, app = _load_server(monkeypatch, tmp_path)
+    client = TestClient(app)
+    captured = {}
+
+    def fake_add_transaction(book_path, tx_input, config):
+        captured["tx_input"] = tx_input
+        return {"status": "success", "transaction": {"description": tx_input.description}}
+
+    monkeypatch.setattr(server, "service_add_transaction", fake_add_transaction)
+
+    response = client.post(
+        "/api/tx/add",
+        headers={"X-API-Key": "secret"},
+        json={
+            "description": "Lunch",
+            "debits": [{"account_id": "expense-guid", "value": "150"}],
+            "credits": [{"account_id": "cash-guid", "value": "150"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["tx_input"].debits[0].account_id == "expense-guid"
+    assert captured["tx_input"].debits[0].account_fullname is None
+
+
 def test_create_app_uses_instance_state_not_import_time_env(monkeypatch, tmp_path):
     monkeypatch.setenv("GNUCASH_API_KEY", "env-secret")
 

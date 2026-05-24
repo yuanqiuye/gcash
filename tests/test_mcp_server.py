@@ -24,7 +24,9 @@ def test_mcp_add_transaction_schema_accepts_structured_and_legacy_splits():
     assert debits["items"]["oneOf"][0]["type"] == "string"
     structured = debits["items"]["oneOf"][1]
     assert structured["type"] == "object"
-    assert structured["required"] == ["account", "value"]
+    assert structured["required"] == ["value"]
+    assert "account_id" in structured["properties"]
+    assert structured["anyOf"] == [{"required": ["account_id"]}, {"required": ["account"]}]
     assert structured["additionalProperties"] is False
 
 
@@ -46,15 +48,35 @@ def test_mcp_build_transaction_input_normalizes_structured_args():
     assert tx_input.credits[0].account_fullname == "Assets:Cash"
 
 
+def test_mcp_build_transaction_input_accepts_account_id_splits():
+    tx_input = build_mcp_transaction_input(
+        {
+            "description": "Lunch",
+            "debits": [{"account_id": "expense-guid", "value": "150"}],
+            "credits": [{"account_id": "cash-guid", "value": "150"}],
+        }
+    )
+
+    assert tx_input.debits[0].account_id == "expense-guid"
+    assert tx_input.debits[0].account_fullname is None
+    assert tx_input.credits[0].account_id == "cash-guid"
+
+
 def test_mcp_server_has_no_deprecated_cli_subprocess_helper():
     assert not hasattr(mcp_server, "call_gcash_cli")
 
 
-def test_mcp_read_only_tool_definitions_expose_only_list_accounts():
+def test_mcp_read_only_tool_definitions_expose_only_read_tools():
     tools = mcp_tool_definitions(read_only=True)
 
-    assert [tool["name"] for tool in tools] == ["gnucash_list_accounts"]
-    assert [spec.name for spec in iter_tool_specs(read_only=True)] == ["gnucash_list_accounts"]
+    assert [tool["name"] for tool in tools] == [
+        "gnucash_list_accounts",
+        "gnucash_list_account_transactions",
+    ]
+    assert [spec.name for spec in iter_tool_specs(read_only=True)] == [
+        "gnucash_list_accounts",
+        "gnucash_list_account_transactions",
+    ]
 
 
 def test_mcp_read_write_tool_definitions_include_mutations():
@@ -63,8 +85,33 @@ def test_mcp_read_write_tool_definitions_include_mutations():
     assert [tool["name"] for tool in tools] == [
         "gnucash_add_transaction",
         "gnucash_list_accounts",
+        "gnucash_list_account_transactions",
+        "gnucash_edit_transaction",
         "gnucash_create_account",
     ]
+
+
+def test_mcp_create_account_schema_accepts_parent_account_id():
+    schema = mcp_server.create_account_input_schema()
+
+    assert "parent_account_id" in schema["properties"]
+    assert schema["required"] == ["name", "type"]
+
+
+def test_mcp_list_account_transactions_schema_requires_account_reference():
+    schema = mcp_server.list_account_transactions_input_schema()
+
+    assert schema["anyOf"] == [{"required": ["account_id"]}, {"required": ["account"]}]
+    assert schema["properties"]["limit"]["maximum"] == 100
+
+
+def test_mcp_edit_transaction_schema_exposes_full_split_replacement():
+    schema = mcp_server.edit_transaction_input_schema()
+
+    assert schema["required"] == ["transaction_id"]
+    assert "debits" in schema["properties"]
+    assert "credits" in schema["properties"]
+    assert schema["properties"]["debits"]["items"]["oneOf"][1]["properties"]["account_id"]["type"] == "string"
 
 
 def test_mcp_read_only_can_be_enabled_by_config_or_env(monkeypatch):
@@ -130,6 +177,19 @@ def test_mcp_http_app_rejects_missing_api_key():
     assert client.post("/mcp/", content=b"{}").status_code == 401
 
 
+def test_mcp_http_app_serves_backup_routes_on_same_port(tmp_path):
+    from starlette.testclient import TestClient
+
+    client = TestClient(
+        create_mcp_http_app(config={"mcp_http_api_key": "secret", "backup_dir": str(tmp_path / "backups")})
+    )
+
+    assert client.get("/ui/backups").status_code == 200
+    assert client.get("/api/health").json() == {"status": "ok", "book_configured": False, "backend": None}
+    assert client.get("/api/backups").status_code == 401
+    assert client.get("/api/backups", headers={"X-API-Key": "secret"}).json() == {"backups": []}
+
+
 def test_mcp_http_app_serves_streamable_http_tools():
     import anyio
     import httpx
@@ -160,5 +220,7 @@ def test_mcp_http_app_serves_streamable_http_tools():
     assert anyio.run(run_client) == [
         "gnucash_add_transaction",
         "gnucash_list_accounts",
+        "gnucash_list_account_transactions",
+        "gnucash_edit_transaction",
         "gnucash_create_account",
     ]

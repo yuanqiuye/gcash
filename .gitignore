@@ -45,3 +45,4 @@ package-lock.json
 
 # Docker
 postgres_data/
+deploy/gnucash-mcp/.env

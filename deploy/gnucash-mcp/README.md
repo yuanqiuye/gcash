@@ -87,6 +87,52 @@ or:
 Authorization: Bearer <strong-mcp-api-key>
 ```
 
+For write tools, have the agent call `gnucash_list_accounts` first and use the returned `id` as `account_id` in `gnucash_add_transaction` splits. Account names are still accepted for compatibility, but `account_id` is the stable identifier and avoids failures from renamed, duplicated, or abbreviated account names.
+
+To inspect one account's recent records, call `gnucash_list_account_transactions`:
+
+```json
+{
+  "account_id": "cash-account-guid",
+  "limit": 10
+}
+```
+
+The response includes `transaction_id`. Use that id with `gnucash_edit_transaction` to update metadata or replace all splits with a balanced debit/credit set:
+
+```json
+{
+  "transaction_id": "transaction-guid",
+  "description": "Corrected transaction",
+  "debits": [{"account_id": "expense-account-guid", "value": "50"}],
+  "credits": [{"account_id": "cash-account-guid", "value": "50"}]
+}
+```
+
+## Backup HTTP Connection
+
+The MCP HTTP service also serves the backup listing and restore UI on the same port. It uses the same `GNUCASH_BOOK`, `backups/`, and `locks/` directories as the MCP tools.
+
+Open the restore UI:
+
+```text
+http://<server-ip>:8765/ui/backups
+```
+
+The UI prompts for `GNUCASH_MCP_HTTP_API_KEY` when it calls the protected backup APIs. Direct API calls use the same key as MCP:
+
+```http
+X-API-Key: <strong-mcp-api-key>
+```
+
+Useful endpoints:
+
+```text
+GET  /api/health
+GET  /api/backups
+POST /api/backups/restore
+```
+
 ## Read-Only Mode
 
 For an MCP server that can inspect accounts but cannot write:

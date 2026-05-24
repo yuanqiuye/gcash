@@ -5,7 +5,14 @@ from unittest.mock import MagicMock, patch
 import piecash
 import pytest
 
-from gnucash_cli.service import add_transaction, build_split, create_account
+from gnucash_cli.service import (
+    add_transaction,
+    build_split,
+    create_account,
+    edit_transaction,
+    list_account_transactions,
+    list_accounts,
+)
 
 
 def _create_minimal_book(book_path):
@@ -207,6 +214,7 @@ def test_add_transaction_balanced(mock_piecash, mock_writable_book, mock_book):
     )
     
     assert result["status"] == "success"
+    assert result["transaction"]["splits"][0]["account_id"] == "cash-guid"
     assert result["transaction"]["splits"][0]["value"] == "100"
     assert result["transaction"]["splits"][0]["quantity"] == "100"
     mock_book.save.assert_called_once()
@@ -283,3 +291,106 @@ def test_add_transaction_writes_real_piecash_book(tmp_path, monkeypatch):
     assert tx_notes == "integration note"
     assert splits["Expenses:Dining"]["value"] == Decimal("150")
     assert splits["Assets:Cash"]["value"] == Decimal("-150")
+
+
+def test_list_account_transactions_returns_recent_transactions_by_account_id(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    book_path = tmp_path / "history.gnucash"
+    _create_minimal_book(book_path)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        add_transaction(
+            book_path=str(book_path),
+            description="Lunch",
+            debits=[{"account": "Expenses:Dining", "value": "100"}],
+            credits_=[{"account": "Assets:Cash", "value": "100"}],
+            tx_date="2026-05-10",
+            tx_currency="TWD",
+            notes="",
+            config={"default_currency": "TWD"},
+            no_auto_backup=True,
+        )
+        add_transaction(
+            book_path=str(book_path),
+            description="Dinner",
+            debits=[{"account": "Expenses:Dining", "value": "200"}],
+            credits_=[{"account": "Assets:Cash", "value": "200"}],
+            tx_date="2026-05-11",
+            tx_currency="TWD",
+            notes="",
+            config={"default_currency": "TWD"},
+            no_auto_backup=True,
+        )
+
+        accounts = list_accounts(str(book_path))["accounts"]
+        cash_id = next(account["id"] for account in accounts if account["fullname"] == "Assets:Cash")
+
+        result = list_account_transactions(
+            book_path=str(book_path),
+            account_id_value=cash_id,
+            account_fullname=None,
+            limit=1,
+        )
+
+    assert result["account"]["id"] == cash_id
+    assert result["count"] == 1
+    assert result["transactions"][0]["description"] == "Dinner"
+    assert result["transactions"][0]["transaction_id"]
+    assert any(split["account_id"] == cash_id for split in result["transactions"][0]["splits"])
+
+
+def test_edit_transaction_updates_metadata_and_replaces_splits(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    book_path = tmp_path / "edit.gnucash"
+    _create_minimal_book(book_path)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        created = add_transaction(
+            book_path=str(book_path),
+            description="Lunch",
+            debits=[{"account": "Expenses:Dining", "value": "100"}],
+            credits_=[{"account": "Assets:Cash", "value": "100"}],
+            tx_date="2026-05-10",
+            tx_currency="TWD",
+            notes="original",
+            config={"default_currency": "TWD"},
+            no_auto_backup=True,
+        )
+
+        edited = edit_transaction(
+            book_path=str(book_path),
+            transaction_id=created["transaction"]["transaction_id"],
+            description="Coffee",
+            tx_date="2026-05-12",
+            notes="fixed",
+            debits=[{"account": "Expenses:Dining", "value": "50"}],
+            credits_=[{"account": "Assets:Cash", "value": "50"}],
+            config={"default_currency": "TWD"},
+            no_auto_backup=True,
+        )
+
+        book = piecash.open_book(str(book_path), readonly=True, open_if_lock=True, do_backup=False)
+        try:
+            tx = list(book.transactions)[0]
+            splits = {
+                split.account.fullname: {
+                    "value": split.value,
+                    "quantity": split.quantity,
+                }
+                for split in tx.splits
+            }
+            tx_description = tx.description
+            tx_post_date = tx.post_date.isoformat()
+            tx_notes = tx.notes
+        finally:
+            book.close()
+
+    assert edited["status"] == "success"
+    assert edited["transaction"]["description"] == "Coffee"
+    assert tx_description == "Coffee"
+    assert tx_post_date == "2026-05-12"
+    assert tx_notes == "fixed"
+    assert splits["Expenses:Dining"]["value"] == Decimal("50")
+    assert splits["Assets:Cash"]["value"] == Decimal("-50")

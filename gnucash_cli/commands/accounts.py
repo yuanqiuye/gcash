@@ -54,6 +54,8 @@ def list_accounts(ctx, fmt, account_type):
               help="Account type.")
 @click.option("--parent", "parent_fullname", default=None,
               help="Parent account fullname (e.g. 'Expenses'). Defaults to root account.")
+@click.option("--parent-id", "parent_account_id", default=None,
+              help="Stable parent account id returned by 'accounts list --format json'.")
 @click.option("--currency", default=None,
               help="Currency for this account (ISO code). Defaults to config default_currency.")
 @click.option("--placeholder", is_flag=True, default=False,
@@ -65,7 +67,7 @@ def list_accounts(ctx, fmt, account_type):
               help="Disable automatic safety backup. Requires allow_unsafe_no_auto_backup: true.")
 @click.option("--no-auto-backup", "legacy_no_auto_backup", is_flag=True, hidden=True)
 @click.pass_context
-def create_account(ctx, name, account_type, parent_fullname, currency, placeholder, description, fmt, unsafe_no_auto_backup, legacy_no_auto_backup):
+def create_account(ctx, name, account_type, parent_fullname, parent_account_id, currency, placeholder, description, fmt, unsafe_no_auto_backup, legacy_no_auto_backup):
     """Create a new account."""
     config = ctx.obj["config"]
     book_path = resolve_book_path(ctx.obj.get("book"), config)
@@ -77,6 +79,7 @@ def create_account(ctx, name, account_type, parent_fullname, currency, placehold
             name=name,
             account_type=account_type,
             parent_fullname=parent_fullname,
+            parent_account_id=parent_account_id,
             currency_code=currency,
             placeholder=placeholder,
             description=description,

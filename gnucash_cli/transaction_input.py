@@ -12,7 +12,7 @@ from datetime import date as Date
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
 from gnucash_cli.exceptions import ValidationError
@@ -63,7 +63,12 @@ class SplitInput(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    account_fullname: str = Field(alias="account", min_length=1)
+    account_fullname: str | None = Field(default=None, alias="account", min_length=1)
+    account_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("account_id", "id", "guid"),
+        min_length=1,
+    )
     value: Decimal = Field(gt=Decimal("0"))
     currency: str | None = None
     quantity: Decimal | None = Field(default=None, gt=Decimal("0"))
@@ -88,11 +93,29 @@ class SplitInput(BaseModel):
 
     @field_validator("account_fullname")
     @classmethod
-    def normalize_account(cls, value: str) -> str:
+    def normalize_account(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         account = value.strip()
         if not account:
             raise ValueError("Split account is required.")
         return account
+
+    @field_validator("account_id")
+    @classmethod
+    def normalize_account_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        account_identifier = value.strip()
+        if not account_identifier:
+            raise ValueError("Split account_id is required.")
+        return account_identifier
+
+    @model_validator(mode="after")
+    def require_account_reference(self):
+        if not self.account_fullname and not self.account_id:
+            raise ValueError("Split account or account_id is required.")
+        return self
 
     @field_validator("currency")
     @classmethod

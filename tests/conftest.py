@@ -38,11 +38,19 @@ def mock_book():
 
     # Setup some mock accounts
     mock_account = MagicMock()
+    mock_account.guid = "cash-guid"
     mock_account.fullname = "Assets:Cash"
+    mock_account.name = "Cash"
+    mock_account.placeholder = False
+    mock_account.children = []
     mock_account.commodity = mock_twd
     
     mock_usd_account = MagicMock()
+    mock_usd_account.guid = "usd-guid"
     mock_usd_account.fullname = "Assets:USD"
+    mock_usd_account.name = "USD"
+    mock_usd_account.placeholder = False
+    mock_usd_account.children = []
     mock_usd_account.commodity = mock_usd
     
     def get_account(fullname):

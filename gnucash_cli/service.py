@@ -16,6 +16,8 @@ from gnucash_cli.services.transactions import (
     add_transaction,
     add_transaction_input,
     build_split,
+    edit_transaction,
+    list_account_transactions,
     parse_split_spec,
 )
 
@@ -30,7 +32,9 @@ __all__ = [
     "add_transaction_input",
     "build_split",
     "create_account",
+    "edit_transaction",
     "fetch_exchange_rates",
+    "list_account_transactions",
     "list_accounts",
     "list_currencies",
     "parse_split_spec",
