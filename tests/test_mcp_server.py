@@ -21,13 +21,10 @@ def test_mcp_add_transaction_schema_accepts_structured_and_legacy_splits():
 
     assert debits["minItems"] == 1
     assert credits["minItems"] == 1
-    assert debits["items"]["oneOf"][0]["type"] == "string"
-    structured = debits["items"]["oneOf"][1]
-    assert structured["type"] == "object"
-    assert structured["required"] == ["value"]
-    assert "account_id" in structured["properties"]
-    assert structured["anyOf"] == [{"required": ["account_id"]}, {"required": ["account"]}]
-    assert structured["additionalProperties"] is False
+    assert debits["items"]["type"] == "object"
+    assert debits["items"]["required"] == ["value"]
+    assert "account_id" in debits["items"]["properties"]
+    assert debits["items"]["additionalProperties"] is False
 
 
 def test_mcp_build_transaction_input_normalizes_structured_args():
@@ -96,12 +93,15 @@ def test_mcp_create_account_schema_accepts_parent_account_id():
 
     assert "parent_account_id" in schema["properties"]
     assert schema["required"] == ["name", "type"]
+    assert "anyOf" not in schema
 
 
 def test_mcp_list_account_transactions_schema_requires_account_reference():
     schema = mcp_server.list_account_transactions_input_schema()
 
-    assert schema["anyOf"] == [{"required": ["account_id"]}, {"required": ["account"]}]
+    assert "anyOf" not in schema
+    assert "account_id" in schema["properties"]
+    assert "account" in schema["properties"]
     assert schema["properties"]["limit"]["maximum"] == 100
 
 
@@ -111,7 +111,7 @@ def test_mcp_edit_transaction_schema_exposes_full_split_replacement():
     assert schema["required"] == ["transaction_id"]
     assert "debits" in schema["properties"]
     assert "credits" in schema["properties"]
-    assert schema["properties"]["debits"]["items"]["oneOf"][1]["properties"]["account_id"]["type"] == "string"
+    assert schema["properties"]["debits"]["items"]["properties"]["account_id"]["type"] == "string"
 
 
 def test_mcp_read_only_can_be_enabled_by_config_or_env(monkeypatch):
@@ -167,6 +167,15 @@ def test_mcp_tool_registry_is_single_source_for_mutating_tools():
 
     assert mutating_names == mcp_server.MUTATING_TOOLS
     assert set(mcp_server.TOOL_BY_NAME) == {spec.name for spec in TOOL_SPECS}
+
+
+def test_mcp_tool_schemas_avoid_top_level_combinators():
+    forbidden = {"oneOf", "anyOf", "allOf", "enum", "not"}
+
+    for tool in mcp_tool_definitions(read_only=False):
+        schema = tool["inputSchema"]
+        assert schema["type"] == "object"
+        assert forbidden.isdisjoint(schema)
 
 
 def test_mcp_http_app_rejects_missing_api_key():

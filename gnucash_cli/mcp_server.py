@@ -32,31 +32,22 @@ class ToolSpec:
 
 def transaction_split_schema() -> dict[str, Any]:
     return {
-        "oneOf": [
-            {
+        "type": "object",
+        "properties": {
+            "account_id": {
                 "type": "string",
-                "description": "Legacy format: 'Account:Name amount [CURRENCY [quantity]]'.",
+                "description": "Preferred stable account id returned by gnucash_list_accounts.",
             },
-            {
-                "type": "object",
-                "properties": {
-                    "account_id": {
-                        "type": "string",
-                        "description": "Preferred stable account id returned by gnucash_list_accounts.",
-                    },
-                    "account": {
-                        "type": "string",
-                        "description": "Legacy account fullname or unique account name, e.g. Expenses:Food.",
-                    },
-                    "value": {"type": "string", "description": "Positive decimal value in transaction currency"},
-                    "currency": {"type": "string", "description": "Optional account currency, e.g. USD"},
-                    "quantity": {"type": "string", "description": "Optional positive account-currency quantity"},
-                },
-                "required": ["value"],
-                "anyOf": [{"required": ["account_id"]}, {"required": ["account"]}],
-                "additionalProperties": False,
+            "account": {
+                "type": "string",
+                "description": "Legacy account fullname or unique account name, e.g. Expenses:Food.",
             },
-        ]
+            "value": {"type": "string", "description": "Positive decimal value in transaction currency"},
+            "currency": {"type": "string", "description": "Optional account currency, e.g. USD"},
+            "quantity": {"type": "string", "description": "Optional positive account-currency quantity"},
+        },
+        "required": ["value"],
+        "additionalProperties": False,
     }
 
 
@@ -110,7 +101,6 @@ def list_account_transactions_input_schema() -> dict[str, Any]:
                 "description": "Maximum number of most recent transactions to return.",
             },
         },
-        "anyOf": [{"required": ["account_id"]}, {"required": ["account"]}],
         "additionalProperties": False,
     }
 
@@ -130,7 +120,6 @@ def create_account_input_schema() -> dict[str, Any]:
             "description": {"type": "string", "description": "Description for the account"},
         },
         "required": ["name", "type"],
-        "anyOf": [{"required": ["parent_account_id"]}, {"required": ["parent"]}],
     }
 
 
