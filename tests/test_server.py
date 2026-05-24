@@ -22,6 +22,16 @@ def test_restore_ui_loads_without_header_but_api_requires_key(monkeypatch, tmp_p
     assert client.get("/api/backups", headers={"X-API-Key": "secret"}).status_code == 200
 
 
+def test_root_redirects_to_backup_ui(monkeypatch, tmp_path):
+    _server, app = _load_server(monkeypatch, tmp_path)
+    client = TestClient(app, follow_redirects=False)
+
+    response = client.get("/")
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/ui/backups"
+
+
 def test_api_rejects_empty_transaction_before_service_call(monkeypatch, tmp_path):
     _server, app = _load_server(monkeypatch, tmp_path)
     client = TestClient(app)

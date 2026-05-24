@@ -5,7 +5,7 @@ import os
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Security
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
 
@@ -52,7 +52,7 @@ def create_app(config: dict | None = None, book_path: str | None = None) -> Fast
         logging.warning("No API Key configured. Server is running in insecure development mode.")
 
     async def verify_api_key(request: Request, api_key: str = Security(api_key_header)):
-        if request.url.path in {"/api/health", "/ui/backups"}:
+        if request.url.path in {"/", "/api/health", "/ui/backups"}:
             return api_key
 
         expected_key = request.app.state.api_key
@@ -72,6 +72,10 @@ def create_app(config: dict | None = None, book_path: str | None = None) -> Fast
     app.state.config = app_config
     app.state.book_path = book_path or os.environ.get("GNUCASH_BOOK")
     app.state.api_key = configured_api_key
+
+    @app.get("/", include_in_schema=False)
+    async def root_redirect():
+        return RedirectResponse(url="/ui/backups")
 
     @app.post("/api/tx/add")
     async def add_transaction(req: TransactionRequest, request: Request):

@@ -193,6 +193,9 @@ def test_mcp_http_app_serves_backup_routes_on_same_port(tmp_path):
         create_mcp_http_app(config={"mcp_http_api_key": "secret", "backup_dir": str(tmp_path / "backups")})
     )
 
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "/ui/backups"
     assert client.get("/ui/backups").status_code == 200
     assert client.get("/api/health").json() == {"status": "ok", "book_configured": False, "backend": None}
     assert client.get("/api/backups").status_code == 401
