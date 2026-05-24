@@ -75,4 +75,6 @@ def click_missing_book_error():
 
 def _expand_path(path: str) -> str:
     """Expand ~ and return absolute path."""
+    if "://" in path:
+        return path
     return str(Path(path).expanduser().resolve())

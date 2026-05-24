@@ -79,3 +79,18 @@ def test_expand_path():
     # Test relative path
     rel_expanded = _expand_path("relative.gnucash")
     assert rel_expanded == str(Path("relative.gnucash").resolve())
+
+
+def test_expand_path_preserves_database_urls():
+    """Database URLs must not be resolved as local file paths."""
+    url = "postgresql://gnucash:<redacted>@gnucash-db:5432/gnucash_data"
+
+    assert _expand_path(url) == url
+
+
+def test_resolve_book_path_preserves_env_database_url():
+    """Container deployments pass the SQL book through GNUCASH_BOOK."""
+    url = "postgresql://gnucash:<redacted>@gnucash-db:5432/gnucash_data"
+
+    with patch.dict(os.environ, {"GNUCASH_BOOK": url}):
+        assert resolve_book_path(None, {}) == url
