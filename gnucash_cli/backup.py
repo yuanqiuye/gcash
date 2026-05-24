@@ -47,7 +47,6 @@ def _execute_backup_unlocked(book_path: str, action_name: str = "manual", config
             "pg_dump",
             "--clean",
             "--if-exists",
-            "--single-transaction",
             "-F",
             "p",
             "-f",

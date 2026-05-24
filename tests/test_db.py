@@ -142,6 +142,9 @@ def test_postgres_backup_does_not_put_credentials_in_argv(tmp_path, monkeypatch)
     cmd, kwargs = calls[0]
     argv = " ".join(cmd)
     assert cmd[0] == "pg_dump"
+    assert "--single-transaction" not in cmd
+    assert "--clean" in cmd
+    assert "--if-exists" in cmd
     assert "postgresql://" not in argv
     assert "alice" not in argv
     assert "s3cr" not in argv
