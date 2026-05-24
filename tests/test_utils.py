@@ -98,7 +98,26 @@ def test_safe_open_book_defaults_to_not_opening_locked_books(mock_open_book, tmp
         pass
 
     mock_open_book.assert_called_once_with(
-        book_path,
+        sqlite_file=book_path,
+        readonly=True,
+        open_if_lock=False,
+        do_backup=True,
+    )
+
+
+@patch("gnucash_cli.book_access.piecash.open_book")
+def test_safe_open_book_uses_uri_conn_for_postgres_urls(mock_open_book):
+    mock_context = MagicMock()
+    mock_context.__enter__.return_value = object()
+    mock_context.__exit__.return_value = None
+    mock_open_book.return_value = mock_context
+    book_path = "postgresql://user:secret@example.com/gnucash"
+
+    with safe_open_book(book_path, readonly=True):
+        pass
+
+    mock_open_book.assert_called_once_with(
+        uri_conn=book_path,
         readonly=True,
         open_if_lock=False,
         do_backup=True,
