@@ -14,6 +14,14 @@ from gnucash_cli.transaction_input import TransactionInput, build_transaction_in
 ToolHandler = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
 
 
+ACCOUNT_RESOLUTION_GUIDANCE = (
+    "Before adding or editing splits, use gnucash_list_accounts to find the matching account_id. "
+    "Do not guess account names. If no existing account is a clear match, ask the user whether to create a new "
+    "account first. Only after the user confirms, call gnucash_create_account, then continue with the add/edit "
+    "operation using the returned account_id."
+)
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
@@ -36,11 +44,17 @@ def transaction_split_schema() -> dict[str, Any]:
         "properties": {
             "account_id": {
                 "type": "string",
-                "description": "Preferred stable account id returned by gnucash_list_accounts.",
+                "description": (
+                    "Preferred stable account id returned by gnucash_list_accounts. "
+                    "Do not invent this value; if no clear account matches, ask the user whether to create one first."
+                ),
             },
             "account": {
                 "type": "string",
-                "description": "Legacy account fullname or unique account name, e.g. Expenses:Food.",
+                "description": (
+                    "Legacy account fullname or unique account name, e.g. Expenses:Food. "
+                    "Prefer account_id from gnucash_list_accounts."
+                ),
             },
             "value": {"type": "string", "description": "Positive decimal value in transaction currency"},
             "currency": {"type": "string", "description": "Optional account currency, e.g. USD"},
@@ -246,7 +260,8 @@ TOOL_SPECS = [
         name="gnucash_add_transaction",
         description=(
             "Add a new transaction to the GnuCash book. Requires balanced debit and credit splits. "
-            "Automatically backs up the database before modification."
+            "Automatically backs up the database before modification. "
+            f"{ACCOUNT_RESOLUTION_GUIDANCE}"
         ),
         input_schema=add_transaction_input_schema,
         handler=_handle_add_transaction,
@@ -254,7 +269,10 @@ TOOL_SPECS = [
     ),
     ToolSpec(
         name="gnucash_list_accounts",
-        description="List all accounts in the GnuCash book. Returns a tree structure.",
+        description=(
+            "List all accounts in the GnuCash book. Returns a tree structure with stable account_id values. "
+            f"{ACCOUNT_RESOLUTION_GUIDANCE}"
+        ),
         input_schema=list_accounts_input_schema,
         handler=_handle_list_accounts,
     ),
@@ -271,7 +289,8 @@ TOOL_SPECS = [
         name="gnucash_edit_transaction",
         description=(
             "Edit a specific transaction by transaction_id. Can update description, date, notes, "
-            "or replace all splits with balanced debit/credit splits. Automatically backs up first."
+            "or replace all splits with balanced debit/credit splits. Automatically backs up first. "
+            f"{ACCOUNT_RESOLUTION_GUIDANCE}"
         ),
         input_schema=edit_transaction_input_schema,
         handler=_handle_edit_transaction,
@@ -279,7 +298,10 @@ TOOL_SPECS = [
     ),
     ToolSpec(
         name="gnucash_create_account",
-        description="Create a new account in the GnuCash book. Automatically backs up the database before modification.",
+        description=(
+            "Create a new account in the GnuCash book only after the user confirms that no existing account is suitable. "
+            "Automatically backs up the database before modification."
+        ),
         input_schema=create_account_input_schema,
         handler=_handle_create_account,
         mutates=True,

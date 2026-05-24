@@ -169,6 +169,24 @@ def test_mcp_tool_registry_is_single_source_for_mutating_tools():
     assert set(mcp_server.TOOL_BY_NAME) == {spec.name for spec in TOOL_SPECS}
 
 
+def test_mcp_tool_descriptions_guide_account_creation_flow():
+    tools = {tool["name"]: tool for tool in mcp_tool_definitions(read_only=False)}
+
+    for name in ("gnucash_add_transaction", "gnucash_list_accounts", "gnucash_edit_transaction"):
+        description = tools[name]["description"]
+        assert "gnucash_list_accounts" in description
+        assert "ask the user whether to create a new account first" in description
+        assert "gnucash_create_account" in description
+        assert "account_id" in description
+
+    create_description = tools["gnucash_create_account"]["description"]
+    assert "only after the user confirms" in create_description
+
+    split_schema = mcp_server.transaction_split_schema()
+    assert "Do not invent" in split_schema["properties"]["account_id"]["description"]
+    assert "ask the user whether to create one first" in split_schema["properties"]["account_id"]["description"]
+
+
 def test_mcp_tool_schemas_avoid_top_level_combinators():
     forbidden = {"oneOf", "anyOf", "allOf", "enum", "not"}
 
