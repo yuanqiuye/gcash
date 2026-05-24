@@ -18,12 +18,14 @@ def safe_open_book(book_path: str, readonly: bool = False, open_if_lock: bool = 
     mode = "readonly" if readonly else "readwrite"
     logger.debug("Opening book [%s]: %s (mode=%s)", book_path, "with backup" if do_backup else "no backup", mode)
 
+    is_postgres = is_postgres_book(book_path)
+    effective_open_if_lock = open_if_lock or (readonly and is_postgres)
     open_kwargs = {
         "readonly": readonly,
-        "open_if_lock": open_if_lock,
+        "open_if_lock": effective_open_if_lock,
         "do_backup": do_backup,
     }
-    if is_postgres_book(book_path):
+    if is_postgres:
         open_kwargs["uri_conn"] = book_path
     else:
         open_kwargs["sqlite_file"] = book_path
