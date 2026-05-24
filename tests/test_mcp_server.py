@@ -178,6 +178,17 @@ def test_mcp_tool_schemas_avoid_top_level_combinators():
         assert forbidden.isdisjoint(schema)
 
 
+def test_mcp_json_results_preserve_unicode_text():
+    text = mcp_server._mcp_json_text({"description": "買飲料", "account": "資產:A0現金:錢包"})
+    error = mcp_server._mcp_json_error_result("帳戶不存在")
+
+    assert "買飲料" in text
+    assert "資產:A0現金:錢包" in text
+    assert "\\u" not in text
+    assert "帳戶不存在" in error.content[0].text
+    assert "\\u" not in error.content[0].text
+
+
 def test_mcp_http_app_rejects_missing_api_key():
     from starlette.testclient import TestClient
 

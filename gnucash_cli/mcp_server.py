@@ -289,6 +289,10 @@ TOOL_BY_NAME = {spec.name: spec for spec in TOOL_SPECS}
 MUTATING_TOOLS = {spec.name for spec in TOOL_SPECS if spec.mutates}
 
 
+def _mcp_json_text(data: dict[str, Any]) -> str:
+    return json.dumps(data, ensure_ascii=False)
+
+
 def create_mcp_server(config: dict[str, Any] | None = None):
     from mcp.server import Server
     from mcp.types import CallToolResult, TextContent, Tool
@@ -316,7 +320,7 @@ def create_mcp_server(config: dict[str, Any] | None = None):
 
         try:
             result = spec.handler(book_path, effective_config, arguments or {})
-            return CallToolResult(content=[TextContent(type="text", text=json.dumps(result))])
+            return CallToolResult(content=[TextContent(type="text", text=_mcp_json_text(result))])
         except Exception as e:
             return _mcp_json_error_result(str(e))
 
@@ -337,7 +341,7 @@ def _mcp_json_error_result(message: str):
 
     return CallToolResult(
         isError=True,
-        content=[TextContent(type="text", text=json.dumps({"status": "error", "message": message}))],
+        content=[TextContent(type="text", text=_mcp_json_text({"status": "error", "message": message}))],
     )
 
 
