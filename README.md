@@ -26,7 +26,6 @@ api_key: your-secret-key
 
 # MCP options. Set mcp_read_only for agents that should inspect accounts only.
 mcp_read_only: false
-mcp_allow_create_account: false
 mcp_http_api_key: your-mcp-http-secret
 
 # Optional runtime directories. If omitted, backups for local SQLite books are
@@ -264,22 +263,6 @@ You can also set this in `~/.gnucash-cli/config.yaml`:
 mcp_read_only: true
 ```
 
-### Account Creation Safety
-
-By default, MCP does not expose `gnucash_create_account`. This prevents agents from creating permanent wrong account categories when they should ask the user to choose an existing account.
-
-For a supervised admin/account-management endpoint, explicitly enable account creation:
-
-```bash
-GNUCASH_MCP_ALLOW_CREATE_ACCOUNT=1 gcash -b "postgresql://gcash:password@<server-ip>:5432/gnucash_user1" mcp
-```
-
-or in `~/.gnucash-cli/config.yaml`:
-
-```yaml
-mcp_allow_create_account: true
-```
-
 ### Streamable HTTP MCP
 
 For a long-running MCP service, start the native Streamable HTTP endpoint instead of wrapping stdio over SSH:
@@ -393,7 +376,7 @@ Each user should get:
 
 AstrBot can remain in its own compose stack and call the selected user's MCP endpoint, for example `http://<server-ip>:8765/mcp`, with that user's API key. The GnuCash GUI should connect to the same user's PostgreSQL database. If the GUI is open, automated writes for that user's MCP service will be rejected by the `gnclock` check.
 
-See `deploy/gnucash-mcp/` for a standalone compose template that includes PostgreSQL, the Streamable HTTP MCP service, the backup/restore HTTP UI, per-user backups, read-only mode, account creation safety, and migration notes.
+See `deploy/gnucash-mcp/` for a standalone compose template that includes PostgreSQL, the Streamable HTTP MCP service, the backup/restore HTTP UI, per-user backups, read-only mode, and migration notes.
 
 ---
 

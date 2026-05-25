@@ -16,7 +16,6 @@ _DEFAULTS = {
     "backup_dir": None,
     "lock_dir": None,
     "mcp_read_only": False,
-    "mcp_allow_create_account": False,
     "mcp_http_api_key": None,
     "allow_unsafe_no_auto_backup": False,
 }
