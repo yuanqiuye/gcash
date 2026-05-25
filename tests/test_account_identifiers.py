@@ -262,5 +262,9 @@ def test_create_account_accepts_parent_account_id(monkeypatch):
     )
 
     assert created["parent"] is parent
+    assert created["placeholder"] == 0
+    assert isinstance(created["placeholder"], int)
+    assert not isinstance(created["placeholder"], bool)
     assert result["account"]["id"] == "new-guid"
     assert result["account"]["parent_id"] == "parent-guid"
+    assert result["account"]["placeholder"] is False

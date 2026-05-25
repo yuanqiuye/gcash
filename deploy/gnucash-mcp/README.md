@@ -24,6 +24,7 @@ POSTGRES_DB=gnucash_user1
 POSTGRES_HOST_PORT=5432
 MCP_HTTP_PORT=8765
 GNUCASH_MCP_HTTP_API_KEY=<strong-mcp-api-key>
+GNUCASH_MCP_ALLOW_CREATE_ACCOUNT=0
 GNUCASH_CLI_IMAGE=ghcr.io/yuanqiuye/gcash:master
 ```
 
@@ -89,6 +90,16 @@ Authorization: Bearer <strong-mcp-api-key>
 
 For write tools, have the agent call `gnucash_list_accounts` first and use the returned `id` as `account_id` in `gnucash_add_transaction` splits. Account names are still accepted for compatibility, but `account_id` is the stable identifier and avoids failures from renamed, duplicated, or abbreviated account names.
 
+By default, the MCP server does not expose `gnucash_create_account`. This prevents an agent from creating a wrong permanent account category when it should ask the user to choose an existing account. Keep `GNUCASH_MCP_ALLOW_CREATE_ACCOUNT=0` for the normal AstrBot bookkeeping endpoint.
+
+If you intentionally need an account-management/admin endpoint, set:
+
+```dotenv
+GNUCASH_MCP_ALLOW_CREATE_ACCOUNT=1
+```
+
+Then restart the stack. Use this only when you are actively supervising account creation.
+
 To inspect one account's recent records, call `gnucash_list_account_transactions`:
 
 ```json
@@ -147,7 +158,7 @@ Restart:
 docker compose up -d
 ```
 
-The server exposes only `gnucash_list_accounts`.
+The server exposes only read tools such as `gnucash_list_accounts` and `gnucash_list_account_transactions`.
 
 ## Backup and Migration
 

@@ -15,6 +15,7 @@ def test_load_config_defaults(tmp_path):
     
     assert config["default_currency"] == "TWD"
     assert config["default_book"] is None
+    assert config["mcp_allow_create_account"] is False
 
 def test_load_config_override_from_yaml(tmp_path):
     """Test load_config overrides defaults with yaml values."""

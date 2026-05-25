@@ -17,8 +17,7 @@ ToolHandler = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
 ACCOUNT_RESOLUTION_GUIDANCE = (
     "Before adding or editing splits, use gnucash_list_accounts to find the matching account_id. "
     "Do not guess account names. If no existing account is a clear match, ask the user whether to create a new "
-    "account first. Only after the user confirms, call gnucash_create_account, then continue with the add/edit "
-    "operation using the returned account_id."
+    "account first. Do not continue the add/edit operation until a matching account_id exists."
 )
 
 
@@ -167,14 +166,24 @@ def edit_transaction_input_schema() -> dict[str, Any]:
     }
 
 
-def mcp_tool_definitions(read_only: bool = False) -> list[dict[str, Any]]:
-    return [spec.as_definition() for spec in iter_tool_specs(read_only=read_only)]
-
-
-def iter_tool_specs(read_only: bool = False) -> list[ToolSpec]:
+def iter_tool_specs(read_only: bool = False, allow_create_account: bool = False) -> list[ToolSpec]:
     if read_only:
         return [spec for spec in TOOL_SPECS if not spec.mutates]
-    return list(TOOL_SPECS)
+    return [
+        spec
+        for spec in TOOL_SPECS
+        if allow_create_account or spec.name != "gnucash_create_account"
+    ]
+
+
+def mcp_tool_definitions(read_only: bool = False, allow_create_account: bool = False) -> list[dict[str, Any]]:
+    return [
+        spec.as_definition()
+        for spec in iter_tool_specs(
+            read_only=read_only,
+            allow_create_account=allow_create_account,
+        )
+    ]
 
 
 def _truthy(value: Any) -> bool:
@@ -186,6 +195,13 @@ def mcp_read_only_enabled(config: dict[str, Any]) -> bool:
     if env_value is not None:
         return _truthy(env_value)
     return _truthy(config.get("mcp_read_only", False))
+
+
+def mcp_create_account_enabled(config: dict[str, Any]) -> bool:
+    env_value = os.environ.get("GNUCASH_MCP_ALLOW_CREATE_ACCOUNT")
+    if env_value is not None:
+        return _truthy(env_value)
+    return _truthy(config.get("mcp_allow_create_account", False))
 
 
 def get_mcp_http_api_key(config: dict[str, Any]) -> str | None:
@@ -299,8 +315,9 @@ TOOL_SPECS = [
     ToolSpec(
         name="gnucash_create_account",
         description=(
-            "Create a new account in the GnuCash book only after the user confirms that no existing account is suitable. "
-            "Automatically backs up the database before modification."
+            "Create a new account in the GnuCash book only after the user explicitly confirms that no existing account "
+            "is suitable. This tool is hidden unless mcp_allow_create_account or GNUCASH_MCP_ALLOW_CREATE_ACCOUNT is "
+            "enabled. Automatically backs up the database before modification."
         ),
         input_schema=create_account_input_schema,
         handler=_handle_create_account,
@@ -321,11 +338,18 @@ def create_mcp_server(config: dict[str, Any] | None = None):
 
     effective_config = config if config is not None else load_config()
     read_only = mcp_read_only_enabled(effective_config)
+    allow_create_account = mcp_create_account_enabled(effective_config)
     app = Server("gnucash-mcp-agent")
 
     @app.list_tools()
     async def handle_list_tools() -> list[Tool]:
-        return [Tool(**definition) for definition in mcp_tool_definitions(read_only=read_only)]
+        return [
+            Tool(**definition)
+            for definition in mcp_tool_definitions(
+                read_only=read_only,
+                allow_create_account=allow_create_account,
+            )
+        ]
 
     @app.call_tool()
     async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> CallToolResult:
@@ -335,6 +359,13 @@ def create_mcp_server(config: dict[str, Any] | None = None):
 
         if read_only and spec.mutates:
             return _mcp_json_error_result("MCP server is running in read-only mode.")
+
+        if spec.name == "gnucash_create_account" and not allow_create_account:
+            return _mcp_json_error_result(
+                "Account creation is disabled for this MCP server. "
+                "Ask the user to choose an existing account_id from gnucash_list_accounts, "
+                "or enable GNUCASH_MCP_ALLOW_CREATE_ACCOUNT for an admin/account-management endpoint."
+            )
 
         book_path = os.environ.get("GNUCASH_BOOK") or effective_config.get("default_book")
         if not book_path:

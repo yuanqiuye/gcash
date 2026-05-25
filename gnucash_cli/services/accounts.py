@@ -25,6 +25,10 @@ VALID_ACCOUNT_TYPES = {
 }
 
 
+def _gnucash_flag(value: bool) -> int:
+    return 1 if value else 0
+
+
 def validate_account_input(name: str, account_type: str) -> str:
     if not name or not name.strip():
         raise ValidationError("Account name is required.")
@@ -60,6 +64,7 @@ def create_account(
 ) -> dict:
     account_type = validate_account_input(name, account_type)
     currency_code = currency_code or config.get("default_currency", "TWD")
+    placeholder_flag = _gnucash_flag(placeholder)
 
     logger.info("Creating account: '%s' (type=%s, parent=%s, currency=%s)", name, account_type, parent_fullname, currency_code)
 
@@ -99,7 +104,7 @@ def create_account(
             type=account_type,
             parent=parent,
             commodity=commodity,
-            placeholder=placeholder,
+            placeholder=placeholder_flag,
             description=description,
         )
         book.save()
@@ -115,7 +120,7 @@ def create_account(
                 "type": new_account.type,
                 "parent_id": account_id(parent),
                 "currency": currency_code,
-                "placeholder": placeholder,
+                "placeholder": bool(placeholder_flag),
                 "description": description,
             },
         }

@@ -7,6 +7,7 @@ from gnucash_cli.mcp_server import (
     create_mcp_http_app,
     get_mcp_http_api_key,
     iter_tool_specs,
+    mcp_create_account_enabled,
     mcp_read_only_enabled,
     mcp_tool_definitions,
 )
@@ -84,6 +85,19 @@ def test_mcp_read_write_tool_definitions_include_mutations():
         "gnucash_list_accounts",
         "gnucash_list_account_transactions",
         "gnucash_edit_transaction",
+    ]
+
+
+def test_mcp_create_account_is_hidden_unless_enabled():
+    default_tools = mcp_tool_definitions(read_only=False)
+    enabled_tools = mcp_tool_definitions(read_only=False, allow_create_account=True)
+
+    assert "gnucash_create_account" not in [tool["name"] for tool in default_tools]
+    assert [tool["name"] for tool in enabled_tools] == [
+        "gnucash_add_transaction",
+        "gnucash_list_accounts",
+        "gnucash_list_account_transactions",
+        "gnucash_edit_transaction",
         "gnucash_create_account",
     ]
 
@@ -121,6 +135,15 @@ def test_mcp_read_only_can_be_enabled_by_config_or_env(monkeypatch):
 
     monkeypatch.setenv("GNUCASH_MCP_READ_ONLY", "1")
     assert mcp_read_only_enabled({"mcp_read_only": False}) is True
+
+
+def test_mcp_create_account_can_be_enabled_by_config_or_env(monkeypatch):
+    monkeypatch.delenv("GNUCASH_MCP_ALLOW_CREATE_ACCOUNT", raising=False)
+    assert mcp_create_account_enabled({"mcp_allow_create_account": True}) is True
+    assert mcp_create_account_enabled({"mcp_allow_create_account": False}) is False
+
+    monkeypatch.setenv("GNUCASH_MCP_ALLOW_CREATE_ACCOUNT", "1")
+    assert mcp_create_account_enabled({"mcp_allow_create_account": False}) is True
 
 
 def test_mcp_http_api_key_prefers_specific_env(monkeypatch):
@@ -170,17 +193,23 @@ def test_mcp_tool_registry_is_single_source_for_mutating_tools():
 
 
 def test_mcp_tool_descriptions_guide_account_creation_flow():
-    tools = {tool["name"]: tool for tool in mcp_tool_definitions(read_only=False)}
+    tools = {
+        tool["name"]: tool
+        for tool in mcp_tool_definitions(
+            read_only=False,
+            allow_create_account=True,
+        )
+    }
 
     for name in ("gnucash_add_transaction", "gnucash_list_accounts", "gnucash_edit_transaction"):
         description = tools[name]["description"]
         assert "gnucash_list_accounts" in description
         assert "ask the user whether to create a new account first" in description
-        assert "gnucash_create_account" in description
         assert "account_id" in description
 
     create_description = tools["gnucash_create_account"]["description"]
-    assert "only after the user confirms" in create_description
+    assert "only after the user explicitly confirms" in create_description
+    assert "GNUCASH_MCP_ALLOW_CREATE_ACCOUNT" in create_description
 
     split_schema = mcp_server.transaction_split_schema()
     assert "Do not invent" in split_schema["properties"]["account_id"]["description"]
@@ -239,6 +268,84 @@ def test_mcp_http_app_serves_streamable_http_tools():
 
     async def run_client():
         app = create_mcp_http_app(config={"mcp_http_api_key": "secret"})
+
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={"X-API-Key": "secret"},
+                timeout=30,
+            ) as http_client:
+                client_context = streamable_http_client(
+                    "http://testserver/mcp/",
+                    http_client=http_client,
+                )
+                async with client_context as (read_stream, write_stream, _get_session_id):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        tools = await session.list_tools()
+
+        return [tool.name for tool in tools.tools]
+
+    assert anyio.run(run_client) == [
+        "gnucash_add_transaction",
+        "gnucash_list_accounts",
+        "gnucash_list_account_transactions",
+        "gnucash_edit_transaction",
+    ]
+
+
+def test_mcp_http_app_rejects_hidden_create_account_direct_call():
+    import anyio
+    import httpx
+    from mcp.client.session import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+
+    async def run_client():
+        app = create_mcp_http_app(config={"mcp_http_api_key": "secret"})
+
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+                headers={"X-API-Key": "secret"},
+                timeout=30,
+            ) as http_client:
+                client_context = streamable_http_client(
+                    "http://testserver/mcp/",
+                    http_client=http_client,
+                )
+                async with client_context as (read_stream, write_stream, _get_session_id):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        result = await session.call_tool(
+                            "gnucash_create_account",
+                            {
+                                "name": "Software",
+                                "type": "EXPENSE",
+                            },
+                        )
+
+        return result.content[0].text
+
+    text = anyio.run(run_client)
+    assert "Account creation is disabled" in text
+    assert "GNUCASH_MCP_ALLOW_CREATE_ACCOUNT" in text
+
+
+def test_mcp_http_app_can_expose_create_account_when_enabled():
+    import anyio
+    import httpx
+    from mcp.client.session import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+
+    async def run_client():
+        app = create_mcp_http_app(
+            config={
+                "mcp_http_api_key": "secret",
+                "mcp_allow_create_account": True,
+            }
+        )
 
         async with app.router.lifespan_context(app):
             async with httpx.AsyncClient(
